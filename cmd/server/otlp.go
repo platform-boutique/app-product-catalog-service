@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -22,20 +23,20 @@ import (
 )
 
 // otlpEndpoint resolves the OTLP/gRPC collector URL (scheme required, e.g. http://alloy:4317).
-// OTEL_EXPORTER_OTLP_ENDPOINT is the standard variable; COLLECTOR_SERVICE_ADDR (host:port) is a
-// legacy fallback. An empty result means telemetry is disabled.
+// Telemetry contract: it is on only if OTEL_EXPORTER_OTLP_ENDPOINT is set. OTEL_SDK_DISABLED=true (the
+// standard OpenTelemetry switch, case-insensitive) and the legacy ENABLE_TRACING=0 force it off even
+// when an endpoint is set. The legacy COLLECTOR_SERVICE_ADDR (host:port) no longer switches telemetry
+// on by itself: it is ignored (main logs a warning when it is set without an endpoint).
+// An empty result means telemetry is off.
 func otlpEndpoint() string {
-	if os.Getenv("ENABLE_TRACING") == "0" {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("OTEL_SDK_DISABLED")), "true") || os.Getenv("ENABLE_TRACING") == "0" {
 		return ""
 	}
-	if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
-		return ep
-	}
-	if addr := os.Getenv("COLLECTOR_SERVICE_ADDR"); addr != "" {
-		return "http://" + addr
-	}
-	return ""
+	return strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 }
+
+// errTelemetryOff is returned by initTelemetry when telemetry is off (not a failure).
+var errTelemetryOff = errors.New("telemetry off: no OTLP endpoint, or OTEL_SDK_DISABLED=true")
 
 // initTelemetry pushes traces, metrics and logs over OTLP/gRPC to the collector.
 //
@@ -49,7 +50,7 @@ func otlpEndpoint() string {
 func initTelemetry(ctx context.Context, defaultServiceName string, loggers ...*logrus.Logger) (func(context.Context) error, error) {
 	endpoint := otlpEndpoint()
 	if endpoint == "" {
-		return func(context.Context) error { return nil }, errors.New("OTEL_EXPORTER_OTLP_ENDPOINT not set")
+		return func(context.Context) error { return nil }, errTelemetryOff
 	}
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")

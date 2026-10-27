@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -44,12 +46,29 @@ func init() {
 	log.Out = os.Stdout
 }
 
+// drainTimeout caps how long a SIGTERM waits for in-flight RPCs before the connections are closed.
+const drainTimeout = 10 * time.Second
+
 func main() {
+	if err := realMain(); err != nil {
+		log.Fatalf("server error: %v", err)
+	}
+	// Normal return = exit code 0 (SIGTERM/SIGINT drained cleanly).
+}
+
+func realMain() error {
 	// --- Telemetry: traces, metrics and logs pushed over OTLP/gRPC (Alloy → Tempo/Mimir/Loki) ---
+	// On only if OTEL_EXPORTER_OTLP_ENDPOINT is set; OTEL_SDK_DISABLED=true forces it off.
 	shutdownTelemetry, err := initTelemetry(context.Background(), "product-catalog-service", log, catalog.Logger())
-	if err != nil {
+	switch {
+	case errors.Is(err, errTelemetryOff):
+		log.Info("telemetry off — set OTEL_EXPORTER_OTLP_ENDPOINT to enable (OTEL_SDK_DISABLED=true forces it off)")
+		if os.Getenv("COLLECTOR_SERVICE_ADDR") != "" {
+			log.Warn("COLLECTOR_SERVICE_ADDR is ignored: set OTEL_EXPORTER_OTLP_ENDPOINT (with scheme) to enable telemetry")
+		}
+	case err != nil:
 		log.Warnf("telemetry disabled, continuing without it: %v", err)
-	} else {
+	default:
 		log.Info("telemetry enabled (OTLP/gRPC)")
 		defer func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -58,11 +77,14 @@ func main() {
 		}()
 	}
 
-	// --- Profiling (Pyroscope push) ---
-	if os.Getenv("ENABLE_PROFILING") == "1" {
-		initProfiling()
+	// --- Profiling: Pyroscope push + pprof, only with PYROSCOPE_ADDR set (ENABLE_PROFILING=0 forces it off) ---
+	pyroscopeAddr, profiling := profilingConfig()
+	if profiling {
+		initProfiling(pyroscopeAddr)
+	} else if os.Getenv("ENABLE_PROFILING") == "1" {
+		log.Info("profiling off — ENABLE_PROFILING=1 alone does nothing, set PYROSCOPE_ADDR to enable")
 	} else {
-		log.Info("profiling disabled — set ENABLE_PROFILING=1 to enable")
+		log.Info("profiling off — set PYROSCOPE_ADDR to enable")
 	}
 
 	// --- Extra latency injection for chaos/load testing ---
@@ -76,7 +98,7 @@ func main() {
 		log.Infof("extra latency: %v", extraLatency)
 	}
 
-	// --- Hot-reload toggle via Unix signals ---
+	// --- Hot-reload toggle via Unix signals (the flag is atomic: handlers read it concurrently) ---
 	var reloadCatalog atomic.Bool
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
@@ -97,13 +119,25 @@ func main() {
 		port = p
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
 	log.Infof("starting grpc server on :%s", port)
-	if err := run(port, extraLatency, &reloadCatalog); err != nil {
-		log.Fatalf("server error: %v", err)
-	}
+	return run(ctx, port, extraLatency, &reloadCatalog, profiling)
 }
 
-func run(port string, extraLatency time.Duration, reloadFlag *atomic.Bool) error {
+// profilingConfig returns the Pyroscope address and whether profiling is on: only when
+// PYROSCOPE_ADDR is set and non-empty and ENABLE_PROFILING is not "0". (Before, ENABLE_PROFILING=1
+// alone started profiling against the default http://pyroscope:4040.)
+func profilingConfig() (string, bool) {
+	addr := strings.TrimSpace(os.Getenv("PYROSCOPE_ADDR"))
+	if addr == "" || os.Getenv("ENABLE_PROFILING") == "0" {
+		return "", false
+	}
+	return addr, true
+}
+
+func run(ctx context.Context, port string, extraLatency time.Duration, reloadFlag *atomic.Bool, profiling bool) error {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %s: %w", port, err)
@@ -123,9 +157,13 @@ func run(port string, extraLatency time.Duration, reloadFlag *atomic.Bool) error
 		grpc.StreamInterceptor(grpcprom.StreamServerInterceptor),
 	)
 
-	ctx := context.Background()
 	svc, err := catalog.NewProductCatalog(ctx, extraLatency, reloadFlag, data.Seed())
 	if err != nil {
+		_ = listener.Close()
+		if ctx.Err() != nil {
+			log.Info("shutdown signal received during start-up, exiting")
+			return nil
+		}
 		return fmt.Errorf("failed to init product catalog: %w", err)
 	}
 
@@ -139,40 +177,70 @@ func run(port string, extraLatency time.Duration, reloadFlag *atomic.Bool) error
 	grpcprom.Register(srv)
 	grpcprom.EnableHandlingTimeHistogram()
 
-	// --- Metrics (+ optional pprof) on a dedicated HTTP server with timeouts ---
+	// --- Metrics (+ pprof only when profiling is on) on a dedicated HTTP server with timeouts ---
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	// G108 fix: only register pprof handlers when profiling is explicitly enabled
+	if profiling {
+		registerPprofHandlers(metricsMux)
+		log.Info("pprof endpoints registered on metrics server")
+	}
+	metricsPort := "9090"
+	if p := os.Getenv("METRICS_PORT"); p != "" {
+		metricsPort = p
+	}
+	// G114 fix: use http.Server with explicit timeouts instead of http.ListenAndServe
+	metricsSrv := &http.Server{
+		Addr:              ":" + metricsPort,
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
-		metricsMux := http.NewServeMux()
-		metricsMux.Handle("/metrics", promhttp.Handler())
-
-		// G108 fix: only register pprof handlers when profiling is explicitly enabled
-		if os.Getenv("ENABLE_PROFILING") == "1" {
-			registerPprofHandlers(metricsMux)
-			log.Info("pprof endpoints registered on metrics server")
-		}
-
-		metricsPort := "9090"
-		if p := os.Getenv("METRICS_PORT"); p != "" {
-			metricsPort = p
-		}
-
-		// G114 fix: use http.Server with explicit timeouts instead of http.ListenAndServe
-		metricsSrv := &http.Server{
-			Addr:              ":" + metricsPort,
-			Handler:           metricsMux,
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      60 * time.Second,
-			IdleTimeout:       120 * time.Second,
-		}
-
 		log.Infof("metrics endpoint on :%s", metricsPort)
-		if err := metricsSrv.ListenAndServe(); err != nil {
+		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Warnf("metrics server error: %v", err)
 		}
 	}()
 
 	log.Infof("listening on %s", listener.Addr().String())
-	return srv.Serve(listener)
+	return serve(ctx, srv, listener, healthSrv, metricsSrv, drainTimeout)
+}
+
+// serve runs srv until it fails or ctx is cancelled (SIGTERM/SIGINT). On cancel it marks every
+// health service NOT_SERVING, stops accepting new RPCs, waits up to drain for in-flight ones
+// (GracefulStop) and then closes what is left (Stop). It returns nil after a requested shutdown,
+// so the process exits 0.
+func serve(ctx context.Context, srv *grpc.Server, l net.Listener, h *health.Server, metrics *http.Server, drain time.Duration) error {
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(l) }()
+
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+	}
+
+	log.Info("shutdown signal received, draining")
+	h.Shutdown() // NOT_SERVING for every service, so probes fail first
+	done := make(chan struct{})
+	go func() { srv.GracefulStop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(drain):
+		log.Warnf("graceful stop exceeded %v, closing remaining connections", drain)
+		srv.Stop()
+		<-done
+	}
+	if metrics != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = metrics.Shutdown(shutdownCtx)
+	}
+	log.Info("shutdown complete")
+	return nil
 }
 
 // registerPprofHandlers adds the standard pprof handlers to the given mux.
@@ -186,13 +254,8 @@ func registerPprofHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 }
 
-// initProfiling starts the Pyroscope push-based profiler.
-func initProfiling() {
-	pyroscopeAddr := os.Getenv("PYROSCOPE_ADDR")
-	if pyroscopeAddr == "" {
-		pyroscopeAddr = "http://pyroscope:4040"
-	}
-
+// initProfiling starts the Pyroscope push-based profiler against pyroscopeAddr.
+func initProfiling(pyroscopeAddr string) {
 	_, err := pyroscope.Start(pyroscope.Config{
 		ApplicationName: "product-catalog-service",
 		ServerAddress:   pyroscopeAddr,

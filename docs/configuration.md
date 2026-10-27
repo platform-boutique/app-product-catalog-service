@@ -6,12 +6,13 @@
 | `PORT` | No | `3550` | gRPC listen port |
 | `METRICS_PORT` | No | `9090` | Prometheus (+pprof) HTTP port |
 | `EXTRA_LATENCY` | No | none | Go duration (e.g. `200ms`) added to every RPC of `ProductCatalogService` — for chaos/latency testing. Invalid value → fatal at startup |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | unset (telemetry off) | OTLP/**gRPC** endpoint for **traces, metrics and logs** (scheme required), e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Legacy fallback: `COLLECTOR_SERVICE_ADDR` (`host:port`). Telemetry is on iff an endpoint is set |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | unset (telemetry off) | OTLP/**gRPC** endpoint for **traces, metrics and logs** (scheme required), e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Telemetry is on **only** if this is set. The legacy `COLLECTOR_SERVICE_ADDR` (`host:port`) is **ignored** (a warning is logged if it is set); it no longer switches telemetry on |
+| `OTEL_SDK_DISABLED` | No | unset | `true` (case-insensitive) forces all telemetry off even if an endpoint is set |
 | `ENABLE_TRACING` | No | — | Legacy switch: `0` forces all telemetry off even if an endpoint is set (it is no longer needed to turn telemetry on) |
 | `OTEL_METRIC_EXPORT_INTERVAL` | No | `15000` | Milliseconds between metric pushes (Go also accepts durations such as `15s`) |
 | `OTEL_SERVICE_NAME` | No | `product-catalog-service` | `service.name` — becomes the Prometheus `job` and the Loki `service_name`; keep the default, dashboards depend on it |
-| `PYROSCOPE_ADDR` | No | `http://pyroscope:4040` | Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope |
-| `ENABLE_PROFILING` | No | off | `1` starts the Pyroscope SDK **and** exposes `/debug/pprof/*` on the metrics port |
+| `PYROSCOPE_ADDR` | No | unset (profiling off) | Profiling runs **only** if this is set (no default address any more). Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope |
+| `ENABLE_PROFILING` | No | — | `0` forces profiling off although `PYROSCOPE_ADDR` is set. `1` alone does nothing (a log line says so). When profiling is on, `/debug/pprof/*` is also exposed on the metrics port |
 
 Notes:
 
