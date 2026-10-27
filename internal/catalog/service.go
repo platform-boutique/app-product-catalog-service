@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pb "product-catalog-service/proto"
@@ -22,12 +23,16 @@ type ProductCatalog struct {
 	catalog      pb.ListProductsResponse
 	departments  []*pb.Category // product_count is filled per request
 	extraLatency time.Duration
-	reloadFlag   *bool
+	// reloadFlag is set by the signal goroutine (SIGUSR1) and consumed by request goroutines,
+	// hence atomic. nil = reload on signal is not wired.
+	reloadFlag *atomic.Bool
+	// load reads products and departments from Postgres; a field so tests can run without a database.
+	load func() ([]*pb.Product, []*pb.Category, error)
 }
 
 // NewProductCatalog initialises the DB pool, applies the schema migrations and the seed from
 // seed (nil = no seed), and loads the catalog into memory.
-func NewProductCatalog(ctx context.Context, extraLatency time.Duration, reloadFlag *bool, seed fs.FS) (*ProductCatalog, error) {
+func NewProductCatalog(ctx context.Context, extraLatency time.Duration, reloadFlag *atomic.Bool, seed fs.FS) (*ProductCatalog, error) {
 	if err := InitDB(ctx); err != nil {
 		return nil, err
 	}
@@ -38,6 +43,7 @@ func NewProductCatalog(ctx context.Context, extraLatency time.Duration, reloadFl
 	svc := &ProductCatalog{
 		extraLatency: extraLatency,
 		reloadFlag:   reloadFlag,
+		load:         loadFromDB,
 	}
 	if err := svc.reload(); err != nil {
 		return nil, err
@@ -135,18 +141,31 @@ func (p *ProductCatalog) ListCategories(_ context.Context, _ *pb.Empty) (*pb.Lis
 
 // --- Internal ---
 
-// reload reads products and departments from Postgres and swaps the cache.
-func (p *ProductCatalog) reload() error {
+// loadFromDB reads products and departments from Postgres.
+func loadFromDB() ([]*pb.Product, []*pb.Category, error) {
 	var fresh pb.ListProductsResponse
 	if err := LoadCatalog(&fresh); err != nil {
-		return err
+		return nil, nil, err
 	}
 	depts, err := LoadDepartments()
+	if err != nil {
+		return nil, nil, err
+	}
+	return fresh.Products, depts, nil
+}
+
+// reload reads products and departments and swaps the cache.
+func (p *ProductCatalog) reload() error {
+	load := p.load
+	if load == nil {
+		load = loadFromDB
+	}
+	products, depts, err := load()
 	if err != nil {
 		return err
 	}
 	p.mu.Lock()
-	p.catalog.Products = fresh.Products
+	p.catalog.Products = products
 	p.departments = depts
 	p.mu.Unlock()
 	return nil
@@ -154,17 +173,19 @@ func (p *ProductCatalog) reload() error {
 
 // products returns the in-memory catalog, reloading from Postgres only when
 // the SIGUSR1 reload flag is set (triggered externally) or the cache is empty.
+// The flag is one-shot: the request that clears it (CompareAndSwap) performs the reload; if the
+// reload fails the flag is re-armed so the next request retries.
 func (p *ProductCatalog) products() ([]*pb.Product, error) {
-	shouldReload := p.reloadFlag != nil && *p.reloadFlag
+	armed := p.reloadFlag != nil && p.reloadFlag.CompareAndSwap(true, false)
 	p.mu.RLock()
 	cached := p.catalog.Products
 	p.mu.RUnlock()
-	if shouldReload || len(cached) == 0 {
+	if armed || len(cached) == 0 {
 		if err := p.reload(); err != nil {
+			if armed {
+				p.reloadFlag.Store(true)
+			}
 			return nil, err
-		}
-		if p.reloadFlag != nil {
-			*p.reloadFlag = false
 		}
 		p.mu.RLock()
 		cached = p.catalog.Products

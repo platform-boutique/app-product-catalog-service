@@ -8,6 +8,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -76,16 +77,16 @@ func main() {
 	}
 
 	// --- Hot-reload toggle via Unix signals ---
-	reloadCatalog := false
+	var reloadCatalog atomic.Bool
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
 	go func() {
 		for sig := range sigs {
 			if sig == syscall.SIGUSR1 {
-				reloadCatalog = true
+				reloadCatalog.Store(true)
 				log.Info("catalog reload enabled")
 			} else {
-				reloadCatalog = false
+				reloadCatalog.Store(false)
 				log.Info("catalog reload disabled")
 			}
 		}
@@ -102,7 +103,7 @@ func main() {
 	}
 }
 
-func run(port string, extraLatency time.Duration, reloadFlag *bool) error {
+func run(port string, extraLatency time.Duration, reloadFlag *atomic.Bool) error {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %s: %w", port, err)
