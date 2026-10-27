@@ -3,7 +3,11 @@
 
 Standard library only. Exit code 0 = valid, 1 = at least one error.
 
-    python3 tools/validate_dataset.py --images-dir ../frontend/static/img/products [--seed-dir data/seed]
+    python3 tools/validate_dataset.py --images-dir ../frontend/static/img/products [--seed-dir data/seed] \\
+        [--reviews ../review-service/data/reviews.json]
+
+With --reviews, `rating` and `review_count` of every product must equal what tools/sync_reviews.py derives
+from that review-service seed (otherwise the catalog and the review UI show different numbers).
 """
 from __future__ import annotations
 
@@ -14,13 +18,16 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sync_reviews  # noqa: E402  (same directory)
+
 ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PICTURE_PREFIX = "/static/img/products/"
 REQUIRED = {
     "id": str, "name": str, "description": str, "brand": str, "category": str,
     "source_category": str, "categories": list, "tags": list, "price_usd": dict,
-    "rating": float, "stock": int, "weight_grams": int, "images": list,
+    "rating": float, "review_count": int, "stock": int, "weight_grams": int, "images": list,
     "thumbnail": str, "reviews": list,
 }
 REVIEW_REQUIRED = {"reviewer_name": str, "rating": int, "comment": str, "date": str}
@@ -43,6 +50,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--images-dir", required=True, type=Path)
     ap.add_argument("--seed-dir", type=Path, default=Path(__file__).resolve().parent.parent / "data" / "seed")
+    ap.add_argument("--reviews", type=Path, help="review-service data/reviews.json: check rating/review_count against it")
     args = ap.parse_args()
 
     errors: list[str] = []
@@ -100,6 +108,11 @@ def main() -> int:
         rating = p.get("rating")
         if not isinstance(rating, (int, float)) or not 0 <= rating <= 5:
             errors.append(f"{pid}: rating {rating!r} not in 0..5")
+        count = p.get("review_count")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            errors.append(f"{pid}: review_count {count!r} must be int >= 0")
+        elif isinstance(rating, (int, float)) and ((count == 0) != (rating == 0)):
+            errors.append(f"{pid}: rating {rating!r} does not fit review_count {count} (0 reviews <=> rating 0)")
         stock = p.get("stock")
         if not isinstance(stock, int) or stock < 0:
             errors.append(f"{pid}: stock {stock!r} must be int >= 0")
@@ -131,6 +144,22 @@ def main() -> int:
             extra = set(r) - set(REVIEW_REQUIRED)
             if extra:
                 errors.append(f"{pid}: review {i} has unexpected fields {sorted(extra)}")
+
+    if args.reviews:
+        reviews = json.loads(args.reviews.read_text(encoding="utf-8"))
+        try:
+            expected = sync_reviews.summaries(reviews)
+        except ValueError as e:
+            errors.append(f"{args.reviews}: {e}")
+            expected = {}
+        for pid in sorted(set(expected) - set(ids)):
+            errors.append(f"{args.reviews}: reviews for unknown product {pid!r}")
+        for p in products:
+            want = expected.get(p.get("id"), (0.0, 0))
+            if (p.get("rating"), p.get("review_count")) != want:
+                errors.append(f"{p.get('id')}: rating/review_count {p.get('rating')!r}/{p.get('review_count')!r} "
+                              f"differ from the review seed {want[0]!r}/{want[1]!r} (run tools/sync_reviews.py)")
+        print(f"reviews checked against {args.reviews}: {len(reviews)} reviews")
 
     for fname, data in (("products.json", products), ("categories.json", departments)):
         for s in walk_strings(data):

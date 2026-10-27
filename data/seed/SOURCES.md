@@ -64,6 +64,23 @@ Note: the source category `tops` actually holds dresses/frocks (Blue Frock, Tart
 - Dropped fields: `sku`, `dimensions`, `warrantyInformation`, `shippingInformation`, `availabilityStatus`,
   `returnPolicy`, `minimumOrderQuantity`, `meta` (barcode, QR code URL, timestamps), `discountPercentage`.
 - `source_id` (the DummyJSON id) is kept for traceability.
+- `rating` and `review_count` are **not** the DummyJSON values. They are derived from the review-service seed (see below).
+  The `reviews` array in products.json is the untouched DummyJSON source data; the service ignores it.
+
+## Rating and review count (derived from the review-service seed)
+
+The shop UI shows the review-service's averages, so the catalog must agree with them (sorting "Top rated" uses the
+catalog `rating`). `rating` and `review_count` of every product are computed by `tools/sync_reviews.py` from
+`apps/review-service/data/reviews.json` (351 reviews, 3 per product at the time of writing):
+
+- `rating` = mean of the review ratings, one decimal, half away from zero (the same as `round(avg(rating), 1)` in
+  review-service's Postgres summary; exact integer arithmetic, no float rounding). `review_count` = number of reviews.
+- A product without reviews gets rating 0 and review_count 0.
+- Deterministic and idempotent. After changing the review seed run
+  `python3 tools/sync_reviews.py --reviews ../review-service/data/reviews.json` and commit the new products.json.
+- Drift checks: `python3 tools/sync_reviews.py --reviews <file> --check`, `tools/validate_dataset.py --reviews <file>`,
+  and the Go test `data/reviews_sync_test.go` (reads the review file from `REVIEWS_JSON` or `../../review-service/data/reviews.json`;
+  **skips, and says so, when the file is not there**, so a checkout without the review-service repo does not verify the drift).
 
 ## Images
 

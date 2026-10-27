@@ -11,6 +11,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -315,5 +316,93 @@ func TestMigrate_ConcurrentStarts(t *testing.T) {
 	}
 	if got := len(productIDs(t, p)); got != 3 {
 		t.Errorf("%d products, want 3", got)
+	}
+}
+
+// A re-seed with changed ratings must update the existing rows (new checksum), not duplicate them.
+func TestMigrate_ReseedUpdatesRatingAndReviewCount(t *testing.T) {
+	p := newPool(t, newDB(t))
+	ctx := context.Background()
+	first := fixture(t)
+	migrateAndSeed(t, p, first)
+
+	type row struct {
+		rating  float64
+		reviews int32
+	}
+	read := func() (map[string]row, string, int) {
+		rows, err := p.Query(ctx, `SELECT id, rating, review_count FROM products ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		got := map[string]row{}
+		n := 0
+		for rows.Next() {
+			var id string
+			var r row
+			if err := rows.Scan(&id, &r.rating, &r.reviews); err != nil {
+				t.Fatal(err)
+			}
+			got[id] = r
+			n++
+		}
+		var sum string
+		if err := p.QueryRow(ctx, `SELECT sha256 FROM catalog_seed WHERE id = 1`).Scan(&sum); err != nil {
+			t.Fatal(err)
+		}
+		return got, sum, n
+	}
+	before, sumBefore, nBefore := read()
+	if before["FIXTURE-DRESS"].reviews != 0 {
+		t.Fatalf("fixture should start without review_count, got %+v", before["FIXTURE-DRESS"])
+	}
+
+	// Same products, new rating and review_count for the dress only.
+	cats, _ := fs.ReadFile(os.DirFS(fixtureDir), "categories.json")
+	prods, _ := fs.ReadFile(os.DirFS(fixtureDir), "products.json")
+	var raw []map[string]any
+	if err := json.Unmarshal(prods, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range raw {
+		if r["id"] == "FIXTURE-DRESS" {
+			r["rating"], r["review_count"] = 3.7, 3
+		}
+	}
+	changedJSON, _ := json.Marshal(raw)
+	changed, err := catalog.ReadSeed(fstest.MapFS{"categories.json": {Data: cats}, "products.json": {Data: changedJSON}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !migrateAndSeed(t, p, changed) {
+		t.Fatal("changed seed reported not applied")
+	}
+	after, sumAfter, nAfter := read()
+	if sumAfter == sumBefore {
+		t.Error("checksum row did not change")
+	}
+	if nAfter != nBefore {
+		t.Errorf("%d rows after re-seed, %d before (duplicates or losses)", nAfter, nBefore)
+	}
+	if got := after["FIXTURE-DRESS"]; got.rating != 3.7 || got.reviews != 3 {
+		t.Errorf("dress not updated: %+v", got)
+	}
+	if after["FIXTURE-MUG"] != before["FIXTURE-MUG"] {
+		t.Errorf("untouched product changed: %+v -> %+v", before["FIXTURE-MUG"], after["FIXTURE-MUG"])
+	}
+	// The service's loader exposes the new count.
+	t.Setenv("DATABASE_URL", p.Config().ConnString())
+	if err := catalog.InitDB(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var resp pb.ListProductsResponse
+	if err := catalog.LoadCatalog(&resp); err != nil {
+		t.Fatal(err)
+	}
+	for _, pr := range resp.Products {
+		if pr.Id == "FIXTURE-DRESS" && (pr.Rating != 3.7 || pr.ReviewCount != 3) {
+			t.Errorf("loader returned rating %v count %d", pr.Rating, pr.ReviewCount)
+		}
 	}
 }

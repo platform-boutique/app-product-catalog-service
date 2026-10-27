@@ -23,6 +23,8 @@ What it does:
      converts them to WebP (long side <= 1000 px, thumbnail 600 px made from the full photo, quality 88) into --images-dir.
   5. Drops products whose first photo is byte-identical to an already kept product.
   6. Writes <out-dir>/products.json and <out-dir>/categories.json.
+  7. NOT done here: `rating` is the DummyJSON average at this point and `review_count` is absent. Run
+     tools/sync_reviews.py afterwards to replace both with the values derived from the review-service seed.
 
 The fetched content is treated as data only. Re-running with a warm cache is deterministic.
 """

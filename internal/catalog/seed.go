@@ -40,6 +40,7 @@ type SeedProduct struct {
 		Nanos        int32  `json:"nanos"`
 	} `json:"price_usd"`
 	Rating      float64  `json:"rating"`
+	ReviewCount int32    `json:"review_count"`
 	Stock       int32    `json:"stock"`
 	WeightGrams int32    `json:"weight_grams"`
 	Images      []string `json:"images"`
@@ -119,6 +120,8 @@ func (s *Seed) validate() error {
 			return fmt.Errorf("seed: product %s has an invalid price", p.ID)
 		case p.Rating < 0 || p.Rating > 5:
 			return fmt.Errorf("seed: product %s has rating %v outside 0-5", p.ID, p.Rating)
+		case p.ReviewCount < 0:
+			return fmt.Errorf("seed: product %s has negative review_count", p.ID)
 		case p.Stock < 0 || p.WeightGrams < 0:
 			return fmt.Errorf("seed: product %s has negative stock or weight", p.ID)
 		}
@@ -182,20 +185,21 @@ func ApplySeed(ctx context.Context, p *pgxpool.Pool, s *Seed) (applied bool, err
 			INSERT INTO products (id, name, description, picture,
 				price_usd_currency_code, price_usd_units, price_usd_nanos, categories,
 				brand, department, source_category, tags, images, thumbnail,
-				rating, stock, weight_grams)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+				rating, review_count, stock, weight_grams)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 			ON CONFLICT (id) DO UPDATE SET
 				name = EXCLUDED.name, description = EXCLUDED.description, picture = EXCLUDED.picture,
 				price_usd_currency_code = EXCLUDED.price_usd_currency_code,
 				price_usd_units = EXCLUDED.price_usd_units, price_usd_nanos = EXCLUDED.price_usd_nanos,
 				categories = EXCLUDED.categories, brand = EXCLUDED.brand, department = EXCLUDED.department,
 				source_category = EXCLUDED.source_category, tags = EXCLUDED.tags, images = EXCLUDED.images,
-				thumbnail = EXCLUDED.thumbnail, rating = EXCLUDED.rating, stock = EXCLUDED.stock,
+				thumbnail = EXCLUDED.thumbnail, rating = EXCLUDED.rating, review_count = EXCLUDED.review_count,
+				stock = EXCLUDED.stock,
 				weight_grams = EXCLUDED.weight_grams`,
 			sp.ID, sp.Name, sp.Description, sp.picture(),
 			sp.PriceUSD.CurrencyCode, sp.PriceUSD.Units, sp.PriceUSD.Nanos, strings.Join(sp.Categories, ","),
 			sp.Brand, dept, sp.SourceCategory, nonNil(sp.Tags), nonNil(sp.Images), sp.Thumbnail,
-			sp.Rating, sp.Stock, sp.WeightGrams)
+			sp.Rating, sp.ReviewCount, sp.Stock, sp.WeightGrams)
 	}
 	seedIDs := make([]string, 0, len(s.Products))
 	for _, sp := range s.Products {
