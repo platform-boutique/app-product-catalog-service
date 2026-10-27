@@ -29,6 +29,10 @@ func TestLoadCatalog_ReturnsProducts(t *testing.T) {
 	if err := catalog.InitDB(ctx); err != nil {
 		t.Fatalf("InitDB failed: %v", err)
 	}
+	// The loader reads the columns added by the migrations (no seed: whatever rows exist are kept).
+	if err := catalog.MigrateAndSeed(ctx, catalog.Pool(), nil); err != nil {
+		t.Fatalf("MigrateAndSeed failed: %v", err)
+	}
 
 	var resp pb.ListProductsResponse
 	if err := catalog.LoadCatalog(&resp); err != nil {
