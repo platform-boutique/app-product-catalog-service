@@ -24,7 +24,7 @@ REQUIRED = {
     "thumbnail": str, "reviews": list,
 }
 REVIEW_REQUIRED = {"reviewer_name": str, "rating": int, "comment": str, "date": str}
-MAX_TOTAL_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 def walk_strings(obj):
