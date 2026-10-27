@@ -69,12 +69,13 @@ On load the service reads every product (`SELECT … FROM products ORDER BY id`)
 | `PORT` | No | `3550` | gRPC listen port |
 | `METRICS_PORT` | No | `9090` | Prometheus (+pprof) HTTP port |
 | `EXTRA_LATENCY` | No | none | Go duration (e.g. `200ms`) added to every RPC of `ProductCatalogService` — for chaos/latency testing. Invalid value → fatal at startup |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | unset (telemetry off) | OTLP/**gRPC** endpoint for **traces, metrics and logs** (scheme required), e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Legacy fallback: `COLLECTOR_SERVICE_ADDR` (`host:port`). Telemetry is on iff an endpoint is set |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | unset (telemetry off) | OTLP/**gRPC** endpoint for **traces, metrics and logs** (scheme required), e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Telemetry is on **only** if this is set. The legacy `COLLECTOR_SERVICE_ADDR` (`host:port`) is **ignored** (a warning is logged if it is set); it no longer switches telemetry on |
+| `OTEL_SDK_DISABLED` | No | unset | `true` (case-insensitive) forces all telemetry off even if an endpoint is set |
 | `ENABLE_TRACING` | No | — | Legacy switch: `0` forces all telemetry off even if an endpoint is set (it is no longer needed to turn telemetry on) |
 | `OTEL_METRIC_EXPORT_INTERVAL` | No | `15000` | Milliseconds between metric pushes (Go also accepts durations such as `15s`) |
 | `OTEL_SERVICE_NAME` | No | `product-catalog-service` | `service.name` — becomes the Prometheus `job` and the Loki `service_name`; keep the default, dashboards depend on it |
-| `PYROSCOPE_ADDR` | No | `http://pyroscope:4040` | Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope |
-| `ENABLE_PROFILING` | No | off | `1` starts the Pyroscope SDK **and** exposes `/debug/pprof/*` on the metrics port |
+| `PYROSCOPE_ADDR` | No | unset (profiling off) | Profiling runs **only** if this is set (no default address any more). Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope |
+| `ENABLE_PROFILING` | No | — | `0` forces profiling off although `PYROSCOPE_ADDR` is set. `1` alone does nothing (a log line says so). When profiling is on, `/debug/pprof/*` is also exposed on the metrics port |
 
 Notes:
 
@@ -257,11 +258,13 @@ The new store catalog (117 products in 7 departments) is committed as data, embe
 
 | File | What it is |
 |---|---|
-| `data/seed/products.json` | Products: `id`, `name`, `description`, `brand`, `category` (department id), `source_category`, `categories` (lower-case values for the comma-separated column), `tags`, `price_usd` (`units`/`nanos`), `rating`, `stock`, `weight_grams`, `images`, `thumbnail`, `reviews`, `source_id` |
+| `data/seed/products.json` | Products: `id`, `name`, `description`, `brand`, `category` (department id), `source_category`, `categories` (lower-case values for the comma-separated column), `tags`, `price_usd` (`units`/`nanos`), `rating` and `review_count` (derived from the review-service seed, see below), `stock`, `weight_grams`, `images`, `thumbnail`, `reviews` (DummyJSON source data, ignored by the service), `source_id` |
 | `data/seed/categories.json` | Departments (`id`, `name`, `description`, `source_categories`) |
 | `data/seed/SOURCES.md` | Source, retrieval date, licence as found, what was changed, assumptions |
 | `tools/fetch_dataset.py` | One-off builder: downloads DummyJSON + images, converts, writes the files above (Python 3 + Pillow) |
-| `tools/validate_dataset.py` | Checks the files and the referenced images (Python 3 standard library only); exit code 1 on any error |
+| `tools/validate_dataset.py` | Checks the files and the referenced images (Python 3 standard library only); exit code 1 on any error. `--reviews <file>` also checks rating/review_count against the review-service seed |
+| `tools/sync_reviews.py` | Writes `rating` (1 decimal, like review-service) and `review_count` into products.json from `apps/review-service/data/reviews.json`; deterministic, idempotent, `--check` for CI |
+| `data/seed/ATTRIBUTION.md` | Short attribution / licence-status note (UNVERIFIED) |
 
 The images live in the **frontend** repo under `static/img/products/<id>-1.webp`, `<id>-2.webp` and `<id>-thumb.webp`; the paths in the JSON (`/static/img/products/...`) are served by `frontend`. Nothing calls an external API at run time.
 
@@ -276,36 +279,11 @@ python3 -m venv /tmp/dataset-venv && /tmp/dataset-venv/bin/pip install pillow==1
 Validate (paths assume the frontend repo is checked out next to this one):
 
 ```bash
-python3 tools/validate_dataset.py --images-dir ../frontend/static/img/products
+python3 tools/validate_dataset.py --images-dir ../frontend/static/img/products \
+  --reviews ../review-service/data/reviews.json
 ```
 
-## Dataset
-
-The new store catalog (117 products in 7 departments) is committed as data, ready for the planned schema/seed migrations. **The service does not read it yet**: it still loads the 9 products from `product-catalog-db`.
-
-| File | What it is |
-|---|---|
-| `data/seed/products.json` | Products: `id`, `name`, `description`, `brand`, `category` (department id), `source_category`, `categories` (lower-case values for the comma-separated column), `tags`, `price_usd` (`units`/`nanos`), `rating`, `stock`, `weight_grams`, `images`, `thumbnail`, `reviews`, `source_id` |
-| `data/seed/categories.json` | Departments (`id`, `name`, `description`, `source_categories`) |
-| `data/seed/SOURCES.md` | Source, retrieval date, licence as found, what was changed, assumptions |
-| `tools/fetch_dataset.py` | One-off builder: downloads DummyJSON + images, converts, writes the files above (Python 3 + Pillow) |
-| `tools/validate_dataset.py` | Checks the files and the referenced images (Python 3 standard library only); exit code 1 on any error |
-
-The images live in the **frontend** repo under `static/img/products/<id>-1.webp`, `<id>-2.webp` and `<id>-thumb.webp`; the paths in the JSON (`/static/img/products/...`) are served by `frontend`. Nothing calls an external API at run time.
-
-Regenerate (only when the dataset should change; it downloads from dummyjson.com):
-
-```bash
-python3 -m venv /tmp/dataset-venv && /tmp/dataset-venv/bin/pip install pillow==13.0.0
-/tmp/dataset-venv/bin/python tools/fetch_dataset.py \
-  --images-dir ../frontend/static/img/products --cache-dir /tmp/dataset-cache
-```
-
-Validate (paths assume the frontend repo is checked out next to this one):
-
-```bash
-python3 tools/validate_dataset.py --images-dir ../frontend/static/img/products
-```
+Ratings: `rating` / `review_count` follow the review-service seed (the shop UI shows its averages). After the review seed changes run `python3 tools/sync_reviews.py --reviews ../review-service/data/reviews.json` and commit products.json. `go test ./data/` fails on drift when the review file is found (`REVIEWS_JSON` or `../../review-service/data/reviews.json`) and skips, loudly, when it is not. A re-seed updates existing rows by id (checksum row changes), including `rating` and `review_count`.
 
 ## Project structure
 
@@ -337,12 +315,15 @@ protoc --go_out=. --go_opt=paths=source_relative \
        --go-grpc_out=. --go-grpc_opt=paths=source_relative proto/productcatalog.proto
 ```
 
+## Shutdown
+
+`SIGTERM` or `SIGINT`: all health services go `NOT_SERVING`, the gRPC server stops accepting RPCs and waits up to 10 s for in-flight ones (`GracefulStop`), then closes what is left; telemetry is flushed and the process **exits 0**. A signal during start-up (before the database is ready) also exits 0. Run: `TestServer_SIGTERMExitsZero` (real binary, throwaway Postgres) and the `serve` unit tests.
+
 ## Known limitations
 
 - Exits if Postgres is unreachable at startup (no retry/back-off in-process).
 - Health is static; it doesn't reflect DB availability.
 - Cache is per-pod and only refreshed by `SIGUSR1`/restart; the seed and migrations run only at start-up.
-- The reload flag is shared between goroutines without synchronisation (technically a data race; benign in practice). The cached slices themselves are now swapped under a lock.
 - Products removed from `products.json` stay in the table (only the 9 legacy ids are deleted); delete them by hand or with a new migration.
 - A changed seed overwrites every seeded column, including `stock` (fine while no other component writes stock).
 - `SearchProducts` still matches only name and description; brand/tag search is in `ListProductsFiltered`.
