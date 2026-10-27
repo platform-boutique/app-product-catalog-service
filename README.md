@@ -199,6 +199,34 @@ curl -s localhost:9090/metrics | grep grpc_server
 
 Seed product IDs: `OLJCESPC7Z` (Sunglasses), `66VCHSJNUP` (Tank Top), `1YMWWN1N4O` (Watch), `L9ECAV7KIM` (Loafers), `2ZYFJ3GM2N` (Hairdryer), `0PUK6V6EV0` (Candle Holder), `LS4PSXUNUM` (Salt & Pepper Shakers), `9SIQT8TOJO` (Bamboo Glass Jar), `6E92ZMYYFZ` (Mug).
 
+## Dataset
+
+The new store catalog (117 products in 7 departments) is committed as data, ready for the planned schema/seed migrations. **The service does not read it yet**: it still loads the 9 products from `product-catalog-db`.
+
+| File | What it is |
+|---|---|
+| `data/seed/products.json` | Products: `id`, `name`, `description`, `brand`, `category` (department id), `source_category`, `categories` (lower-case values for the comma-separated column), `tags`, `price_usd` (`units`/`nanos`), `rating`, `stock`, `weight_grams`, `images`, `thumbnail`, `reviews`, `source_id` |
+| `data/seed/categories.json` | Departments (`id`, `name`, `description`, `source_categories`) |
+| `data/seed/SOURCES.md` | Source, retrieval date, licence as found, what was changed, assumptions |
+| `tools/fetch_dataset.py` | One-off builder: downloads DummyJSON + images, converts, writes the files above (Python 3 + Pillow) |
+| `tools/validate_dataset.py` | Checks the files and the referenced images (Python 3 standard library only); exit code 1 on any error |
+
+The images live in the **frontend** repo under `static/img/products/<id>-1.webp`, `<id>-2.webp` and `<id>-thumb.webp`; the paths in the JSON (`/static/img/products/...`) are served by `frontend`. Nothing calls an external API at run time.
+
+Regenerate (only when the dataset should change; it downloads from dummyjson.com):
+
+```bash
+python3 -m venv /tmp/dataset-venv && /tmp/dataset-venv/bin/pip install pillow==13.0.0
+/tmp/dataset-venv/bin/python tools/fetch_dataset.py \
+  --images-dir ../frontend/static/img/products --cache-dir /tmp/dataset-cache
+```
+
+Validate (paths assume the frontend repo is checked out next to this one):
+
+```bash
+python3 tools/validate_dataset.py --images-dir ../frontend/static/img/products
+```
+
 ## Project structure
 
 ```
