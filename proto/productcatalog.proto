@@ -19,10 +19,24 @@ message Product {
   string picture = 4;
   Money price_usd = 5;
   repeated string categories = 6;
+  // Fields 7-15 were added for the general store (additive; older clients ignore them).
+  string brand = 7;
+  double rating = 8;          // average rating 0-5
+  int32 review_count = 9;     // 0 here; reviews live in review-service
+  int32 stock = 10;
+  int32 weight_grams = 11;
+  repeated string tags = 12;
+  repeated string images = 13;  // relative paths served by frontend, e.g. /static/img/products/<id>-1.webp
+  string thumbnail = 14;        // relative path of the small image
+  string department = 15;       // Category.id of the product's department, "" if none
 }
 
 message ListProductsResponse {
   repeated Product products = 1;
+  // Set only by ListProductsFiltered (ListProducts returns everything and leaves them 0).
+  int32 total = 2;      // number of matches over all pages
+  int32 page = 3;       // effective page (1-based)
+  int32 page_size = 4;  // effective page size
 }
 
 message GetProductRequest {
@@ -37,8 +51,37 @@ message SearchProductsResponse {
   repeated Product results = 1;
 }
 
+enum ProductSort {
+  PRODUCT_SORT_UNSPECIFIED = 0;  // same as PRODUCT_SORT_NAME_ASC
+  PRODUCT_SORT_NAME_ASC = 1;
+  PRODUCT_SORT_PRICE_ASC = 2;
+  PRODUCT_SORT_PRICE_DESC = 3;
+  PRODUCT_SORT_RATING_DESC = 4;
+}
+
+message ListProductsRequest {
+  string department = 1;   // Category.id; "" = all departments
+  string query = 2;        // case-insensitive substring over name, description, brand, tags; "" = no filter
+  ProductSort sort = 3;
+  int32 page = 4;          // 1-based; 0 = 1
+  int32 page_size = 5;     // 0 = 24, values above 100 are capped at 100
+}
+
+message Category {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  int32 product_count = 4;
+}
+
+message ListCategoriesResponse {
+  repeated Category categories = 1;  // in display order
+}
+
 service ProductCatalogService {
   rpc ListProducts(Empty) returns (ListProductsResponse) {}
   rpc GetProduct(GetProductRequest) returns (Product) {}
   rpc SearchProducts(SearchProductsRequest) returns (SearchProductsResponse) {}
+  rpc ListProductsFiltered(ListProductsRequest) returns (ListProductsResponse) {}
+  rpc ListCategories(Empty) returns (ListCategoriesResponse) {}
 }

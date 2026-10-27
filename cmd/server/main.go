@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"product-catalog-service/data"
 	"product-catalog-service/internal/catalog"
 	pb "product-catalog-service/proto"
 
@@ -122,7 +123,7 @@ func run(port string, extraLatency time.Duration, reloadFlag *bool) error {
 	)
 
 	ctx := context.Background()
-	svc, err := catalog.NewProductCatalog(ctx, extraLatency, reloadFlag)
+	svc, err := catalog.NewProductCatalog(ctx, extraLatency, reloadFlag, data.Seed())
 	if err != nil {
 		return fmt.Errorf("failed to init product catalog: %w", err)
 	}

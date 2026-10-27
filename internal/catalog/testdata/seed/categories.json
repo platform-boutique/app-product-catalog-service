@@ -1,0 +1,4 @@
+[
+  {"id": "women", "name": "Women", "description": "Dresses, tops and shoes.", "source_categories": ["womens-dresses"]},
+  {"id": "kitchen", "name": "Kitchen", "description": "Cookware and tableware.", "source_categories": ["kitchen-accessories"]}
+]
