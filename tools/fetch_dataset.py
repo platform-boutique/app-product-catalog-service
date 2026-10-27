@@ -20,7 +20,7 @@ What it does:
   2. Keeps only the store-like source categories (see DEPARTMENTS) and groups them into departments.
   3. Converts every product to the seed format (exact cent prices, no reviewer e-mails, ...).
   4. Downloads up to MAX_IMAGES images plus the thumbnail per product (sequentially, with a pause),
-     converts them to WebP (long side <= 800 px, thumbnail 320 px, quality 80) into --images-dir.
+     converts them to WebP (long side <= 1000 px, thumbnail 600 px made from the full photo, quality 88) into --images-dir.
   5. Drops products whose first photo is byte-identical to an already kept product.
   6. Writes <out-dir>/products.json and <out-dir>/categories.json.
 
@@ -48,9 +48,9 @@ IMAGE_HOST_PREFIX = "https://cdn.dummyjson.com/"
 USER_AGENT = "platform-demo-dataset-builder/1.0 (one-off fetch for a demo shop)"
 
 MAX_IMAGES = 2          # product images kept per product
-IMAGE_LONG_SIDE = 800   # px
-THUMB_LONG_SIDE = 320   # px
-WEBP_QUALITY = 80
+IMAGE_LONG_SIDE = 1000  # px (the source images are 1000 px: kept at full size, never upscaled)
+THUMB_LONG_SIDE = 600   # px (card images, sharp on 2x screens; made from the full-size photo, not from the 300 px source thumbnail)
+WEBP_QUALITY = 88
 PAUSE_SECONDS = 0.25    # between image downloads, to be polite to the CDN
 ID_MAX_LEN = 40
 PICTURE_PREFIX = "/static/img/products/"
@@ -134,7 +134,7 @@ def to_webp(raw: bytes, long_side: int, dest: Path, skip_existing: bool = False)
         img = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
         img.thumbnail((long_side, long_side), Image.Resampling.LANCZOS)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        img.save(dest, "WEBP", quality=WEBP_QUALITY, method=6)
+        img.save(dest, "WEBP", quality=WEBP_QUALITY, method=4)
 
 
 def image_cache_path(cache_dir: Path, url: str) -> Path:
@@ -193,7 +193,7 @@ def main() -> int:
                     args.skip_existing_images)
             images.append(PICTURE_PREFIX + name)
         thumb_name = f"{pid}-thumb.webp"
-        thumb_url = p.get("thumbnail") or p["images"][0]
+        thumb_url = p["images"][0]  # the source thumbnail is only 300 px: too soft for cards on 2x screens
         to_webp(fetch(thumb_url, image_cache_path(args.cache_dir, thumb_url)), THUMB_LONG_SIDE,
                 args.images_dir / thumb_name, args.skip_existing_images)
 

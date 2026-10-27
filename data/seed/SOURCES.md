@@ -67,8 +67,8 @@ Note: the source category `tops` actually holds dresses/frocks (Blue Frock, Tart
 
 ## Images
 
-- Up to 2 product images per product (the source has 1-4), converted to WebP, long side at most 800 px, quality 80;
-  plus one thumbnail per product from the source thumbnail (`<id>-thumb.webp`), long side at most 320 px. The source
-  thumbnails are 300 px, so the committed thumbnails are 300 px (no upscaling).
-- 304 files (187 product images + 117 thumbnails), 9,238,380 bytes (8.81 MiB) in total, committed in the frontend
+- Up to 2 product images per product (the source has 1-4), converted to WebP at full source size (1000 px, never upscaled), quality 88;
+  plus one 600 px card image per product (`<id>-thumb.webp`), made from the full-size photo (the source's own thumbnails are only
+  300 px and looked soft on cards).
+- 304 files (187 product images + 117 thumbnails), 16,283,236 bytes (15.53 MiB) in total, committed in the frontend
   repository under `static/img/products/`.
