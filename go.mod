@@ -5,7 +5,7 @@ go 1.26.10
 require (
 	github.com/grafana/pyroscope-go v1.4.3
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/sirupsen/logrus v1.10.2
 	go.opentelemetry.io/contrib/bridges/otellogrus v0.21.0
@@ -15,11 +15,10 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.47.0
-	go.opentelemetry.io/otel/log v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/sdk/log v1.47.0
 	go.opentelemetry.io/otel/sdk/metric v1.47.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 )
 
@@ -42,6 +41,7 @@ require (
 	github.com/prometheus/procfs v0.22.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0 // indirect
+	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.1 // indirect
