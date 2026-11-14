@@ -76,6 +76,7 @@ Product ids are slugs from the seed (`<name>-<source id>`, e.g. `blue-frock-162`
 
 ```
 ├── cmd/server/main.go            # entrypoint: tracing, profiling, signals (SIGUSR1/2), gRPC server, metrics server
+├── internal/healthcheck/healthcheck.go     # `healthcheck` subcommand (container HEALTHCHECK): grpc.health.v1 Check on the own port
 ├── data/
 │   ├── embed.go                  # embeds seed/*.json (go:embed cannot reach outside a package dir)
 │   └── seed/                     # products.json, categories.json, SOURCES.md
