@@ -99,13 +99,13 @@ Multi-stage [`Dockerfile`](Dockerfile):
 
 | Stage | Base | What happens |
 |---|---|---|
-| builder | `golang:1.25-alpine` | `go mod download`, then `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" ./cmd/server` |
+| builder | `golang:1.25-alpine` | `go mod download`, then `CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w -X …/internal/obs.Version=… -X …/internal/obs.Commit=…" ./cmd/server` (BuildKit sets the target, so the same Dockerfile builds amd64 and arm64) |
 | runtime | `alpine:3.21` | single binary at `/app/product-catalog-service` (Alpine rather than `scratch` so pprof/Pyroscope have a normal userland) |
 
 - **Entrypoint:** `/app/product-catalog-service`. `GOTRACEBACK=single`.
-- **User: root** — no `USER` in the Dockerfile; the image runs as UID 0 (verified). The binary needs no privileges, so set a non-root `runAsUser` (e.g. `10001`) in Kubernetes.
-- **Architecture: `amd64` only** (`GOARCH=amd64` hard-coded) — fails with `exec format error` on `arm64` nodes.
-- **EXPOSE:** `3550`, `9090`. **No `HEALTHCHECK`.**
+- **User:** numeric `USER 10001:10001` (no `/etc/passwd` entry needed; the process writes nothing to disk, so a read-only root filesystem works). Build args `SERVICE_VERSION` (default `dev`) and `SERVICE_COMMIT` (default `unknown`) set the OCI labels `version`/`revision` (plus `source`, `licenses=Apache-2.0`) and the ENV of the same names.
+- **Architecture:** built for the target platform (`TARGETARCH`); only the amd64 build was run here, arm64 is **not run**.
+- **EXPOSE:** `3550`, `9090`. **`HEALTHCHECK`:** `nc -z localhost ${PORT:-3550}` (TCP connect to the gRPC port; the service has no `healthcheck` subcommand, so this does not check `SERVING`).
 - **Image size:** ~11 MB. `.dockerignore` excludes `vendor/` only.
 
 ## Kubernetes deployment notes
@@ -147,7 +147,7 @@ livenessProbe:
 ```yaml
 securityContext:
   runAsNonRoot: true
-  runAsUser: 10001        # image runs as root by default; any non-zero UID works
+  runAsUser: 10001        # same as the image USER
   runAsGroup: 10001
   readOnlyRootFilesystem: true
   allowPrivilegeEscalation: false
@@ -347,4 +347,4 @@ protoc --go_out=. --go_opt=paths=source_relative \
 - `SearchProducts` still matches only name and description; brand/tag search is in `ListProductsFiltered`.
 - Migrations need DDL rights for the service's database user; there is no "migrations off" switch.
 - No down-migration is run by the service (the `-- +goose Down` sections exist but were not tested).
-- `amd64`-only image that runs as root unless the pod overrides it.
+- The `HEALTHCHECK` only proves the port accepts connections, not that the service reports `SERVING`.
