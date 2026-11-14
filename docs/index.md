@@ -34,7 +34,7 @@ flowchart LR
 | **Language / runtime** | Go 1.25 (static binary, `CGO_ENABLED=0`), `pgx/v5` |
 | **Image** | `mladenovskistefan/product-catalog-service` |
 | **Protocol / port** | gRPC (HTTP/2, plaintext) on `3550` |
-| **Metrics** | Pushed over OTLP/gRPC (Prometheus registry bridged into OpenTelemetry); `/metrics` on `9090` is still served for debugging |
+| **Metrics** | Prometheus `/metrics` on `9090` (`METRICS_PORT`), scraped by Alloy; the same registry is also pushed over OTLP/gRPC when an endpoint is set |
 | **Health** | Standard `grpc.health.v1.Health/Check` on `3550` — static `SERVING`, does **not** reflect DB health |
 | **State** | In-memory copy of the `products` table; source of truth is Postgres |
 | **Depends on** | `product-catalog-db` (PostgreSQL) — **hard dependency at startup** |

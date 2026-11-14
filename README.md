@@ -11,7 +11,7 @@ Part of the [platform-demo](https://github.com/platform-boutique) platform — m
 | **Language / runtime** | Go (static binary, `CGO_ENABLED=0`), `pgx/v5`, `pressly/goose/v3` |
 | **Image** | `mladenovskistefan/product-catalog-service` |
 | **Protocol / port** | gRPC (HTTP/2, plaintext) on `3550` |
-| **Metrics** | Pushed over OTLP/gRPC (Prometheus registry bridged into OpenTelemetry); `/metrics` on `9090` is still served for debugging |
+| **Metrics** | Prometheus `/metrics` on `9090` (`METRICS_PORT`), scraped by Alloy; the same registry is also pushed over OTLP/gRPC when an endpoint is set |
 | **Health** | Standard `grpc.health.v1.Health/Check` on `3550` — static `SERVING`, does **not** reflect DB health |
 | **State** | In-memory copy of the `products` and `departments` tables; source of truth is Postgres, schema and seed are owned by this service (migrations at start-up) |
 | **Depends on** | `product-catalog-db` (PostgreSQL) — **hard dependency at startup** |
@@ -67,15 +67,21 @@ On load the service reads every product (`SELECT … FROM products ORDER BY id`)
 |---|---|---|---|
 | `DATABASE_URL` | **Yes** | — | Postgres connection string, e.g. `postgres://catalog:catalog@product-catalog-db:5432/productcatalog` (add `?sslmode=disable` if the server has no TLS and you want to skip negotiation). **Contains the password → treat as a Secret.** If unset the process logs fatal and exits |
 | `PORT` | No | `3550` | gRPC listen port |
-| `METRICS_PORT` | No | `9090` | Prometheus (+pprof) HTTP port |
 | `EXTRA_LATENCY` | No | none | Go duration (e.g. `200ms`) added to every RPC of `ProductCatalogService` — for chaos/latency testing. Invalid value → fatal at startup |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | unset (telemetry off) | OTLP/**gRPC** endpoint for **traces, metrics and logs** (scheme required), e.g. `http://alloy.monitoring.svc.cluster.local:4317`. Telemetry is on **only** if this is set. The legacy `COLLECTOR_SERVICE_ADDR` (`host:port`) is **ignored** (a warning is logged if it is set); it no longer switches telemetry on |
-| `OTEL_SDK_DISABLED` | No | unset | `true` (case-insensitive) forces all telemetry off even if an endpoint is set |
-| `ENABLE_TRACING` | No | — | Legacy switch: `0` forces all telemetry off even if an endpoint is set (it is no longer needed to turn telemetry on) |
-| `OTEL_METRIC_EXPORT_INTERVAL` | No | `15000` | Milliseconds between metric pushes (Go also accepts durations such as `15s`) |
-| `OTEL_SERVICE_NAME` | No | `product-catalog-service` | `service.name` — becomes the Prometheus `job` and the Loki `service_name`; keep the default, dashboards depend on it |
-| `PYROSCOPE_ADDR` | No | unset (profiling off) | Profiling runs **only** if this is set (no default address any more). Profiles use the Pyroscope SDK push protocol (**not** OTLP). Point it at Alloy (`http://alloy.monitoring.svc.cluster.local:4040`), which forwards to Pyroscope, or directly at Pyroscope |
-| `ENABLE_PROFILING` | No | — | `0` forces profiling off although `PYROSCOPE_ADDR` is set. `1` alone does nothing (a log line says so). When profiling is on, `/debug/pprof/*` is also exposed on the metrics port |
+| `METRICS_PORT` | No | `9090` | Port of the Prometheus `/metrics` endpoint (scraped by Alloy). A value that is not a port falls back to `9090` with a warning |
+| `PPROF_ADDR` | No | unset (no pprof) | `host:port` of a separate pprof listener, e.g. `127.0.0.1:6060`. Off unless set; never expose it. pprof is never served on the metrics port |
+| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn` or `error`; anything else falls back to `info` with a warning |
+| `SERVICE_VERSION` | No | build info, else `dev` | `service.version`, the `version` log field and the `build_info` label. Fallbacks in order: ldflags `-X <module>/internal/obs.Version=...` (and `.Commit=`, `.BuildTime=`), the VCS revision Go embeds in the binary (12 characters, `-dirty` if modified), `dev` |
+| `DEPLOYMENT_ENVIRONMENT` | No | `local` | `deployment.environment` on every signal and the Pyroscope tag `environment` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | unset (telemetry off) | OTLP/**gRPC** endpoint for **traces, metrics and logs**, e.g. `http://alloy:4317`. Telemetry is on only if this is a valid absolute http(s) URL; empty or malformed means off (one warning, never a crash). The legacy `COLLECTOR_SERVICE_ADDR` and `ENABLE_TRACING` are no longer read |
+| `OTEL_SDK_DISABLED` | No | unset | `true` (trimmed, case-insensitive) forces everything off: OTLP export and profiling, even if an endpoint or `PYROSCOPE_ADDR` is set |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | No | `grpc` | Documented knob; only gRPC is implemented, the value is not read |
+| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | No | SDK default (`parentbased_always_on`) | Standard OpenTelemetry sampler variables, read by the SDK (tested for `always_on` and `always_off`) |
+| `OTEL_RESOURCE_ATTRIBUTES` | No | unset | Extra resource attributes (`k=v,...`); applied after the defaults, so they can override them |
+| `OTEL_SERVICE_NAME` | No | `product-catalog-service` | `service.name`; keep the default, dashboards depend on it |
+| `OTEL_METRIC_EXPORT_INTERVAL` | No | `15000` | Milliseconds between metric pushes (also accepts durations such as `15s`) |
+| `PYROSCOPE_ADDR` | No | unset (profiling off) | Pyroscope URL (SDK push protocol, not OTLP). The only switch: no default address, `ENABLE_PROFILING=1` alone starts nothing |
+| `ENABLE_PROFILING` | No | unset | `0` forces profiling off even with `PYROSCOPE_ADDR`; any other value changes nothing |
 
 Notes:
 
@@ -83,9 +89,9 @@ Notes:
 - **Startup requires a reachable database.** `InitDB` opens a pgx pool and pings it; on failure the process exits non-zero (no retry). In Kubernetes this shows up as `CrashLoopBackOff` until Postgres is ready (with exponential back-off up to 5 min). Use an init container that waits for Postgres, or accept the restarts.
 - The Pyroscope application name is hard-coded to `product-catalog-service`.
 - pgx pool uses library defaults (no tuning knobs exposed).
-- Telemetry is **pushed**, not scraped: traces, metrics and logs share one OTLP/gRPC endpoint (Alloy); profiles go to Pyroscope (via Alloy). `service.instance.id` is the pod hostname, so replicas stay distinct in Mimir.
-- A Prometheus `/metrics` endpoint is still served on `METRICS_PORT` for debugging, but nothing has to scrape it — the same registry is bridged into OTLP, so metric names are unchanged.
-- Logs: the `logrus` logger keeps writing JSON to stdout and additionally mirrors every record over OTLP (with trace ids when a context is attached).
+- Traces, metrics and logs share one OTLP/gRPC endpoint (Alloy); profiles go to Pyroscope (via Alloy). `service.instance.id` is the pod hostname, so replicas stay distinct in Mimir.
+- `/metrics` is served on `METRICS_PORT` (default `9090`); the same registry is bridged into OTLP, so a scrape and a push carry the same names. pprof only on `PPROF_ADDR`, never on the metrics port (before, `ENABLE_PROFILING`/`PYROSCOPE_ADDR` exposed `/debug/pprof/*` there).
+- Logs: the `logrus` loggers write the shared JSON shape to stdout (level from `LOG_LEVEL`) and mirror every record over OTLP; see Observability for the fields.
 
 ## Container image
 
@@ -111,7 +117,7 @@ Multi-stage [`Dockerfile`](Dockerfile):
 | Name | Port | Protocol | Expose via Service? |
 |---|---|---|---|
 | `grpc` | `3550` | TCP (HTTP/2) | Yes — callers dial `product-catalog-service:3550` |
-| `metrics` | `9090` | TCP (HTTP/1.1) | Optional (debugging/pprof). Not scraped by default — metrics are pushed over OTLP |
+| `metrics` | `9090` | TCP (HTTP/1.1) | Prometheus `/metrics` (scraped by Alloy locally; also pushed over OTLP). pprof is not served here |
 
 **Service DNS name expected by callers:** `product-catalog-service` (`frontend`, `checkout-service` and `recommendation-service` all use `product-catalog-service:3550`).
 
@@ -173,12 +179,24 @@ and was verified in the earlier local phase on a 3-node kind cluster (since dele
 
 | Signal | Implementation | Destination |
 |---|---|---|
-| **Traces** | OpenTelemetry (`otelgrpc`/`otelhttp` handlers), OTLP/gRPC exporter, `AlwaysSample`, W3C TraceContext + Baggage; the trace context is propagated to every downstream call | Alloy `:4317` → Tempo |
-| **Metrics** | The Prometheus default registry (`grpc_server_handled_total`, `grpc_server_handling_seconds_*`, `grpc_server_started_total`, `grpc_server_msg_*`, Go runtime/process) is bridged into OpenTelemetry and pushed over OTLP/gRPC every 15 s — metric names are unchanged. `/metrics` is still served for debugging | Alloy → Mimir |
-| **Logs** | `logrus` JSON to stdout **and** an OTLP/gRPC hook (`otellogrus`) (the `internal/catalog` logger is hooked too) | Alloy → Loki |
-| **Profiles** | Pyroscope Go SDK (CPU, alloc/inuse objects & space) plus pprof HTTP when profiling is on | Alloy `:4040` → Pyroscope |
+| **Traces** | OpenTelemetry (`otelgrpc` handlers), OTLP/gRPC exporter (batch processor, queue bounded at 2048), W3C TraceContext + Baggage propagated to every downstream call. Sampler from `OTEL_TRACES_SAMPLER` (SDK default `parentbased_always_on`) | Alloy `:4317` -> Tempo |
+| **Metrics** | The Prometheus default registry: `grpc_server_handled_total`, `grpc_server_handling_seconds_*`, `grpc_server_started_total`, `grpc_server_msg_*`, Go runtime/process. Served as Prometheus text on `:9090/metrics` (`METRICS_PORT`) and, because the same registry is bridged into OpenTelemetry, also pushed over OTLP every 15 s (metric names identical). Plus `build_info{service,version,commit} 1` | Alloy scrapes `:9090` -> Mimir |
+| **Logs** | `logrus`, one JSON object per line on stdout, plus an OTLP/gRPC hook (`otellogrus`). The process logger and the `internal/catalog` logger (migrations, seed, loader) are both configured by `obs.Start`, so start-up lines have the same fields as everyone else's (before, the catalog package wrote logrus' default keys `time`/`level`/`msg`). This service logs nothing per request, so `trace_id`/`span_id` appear only if a future call site logs with `log.WithContext(ctx)`; the `x-request-id` of a caller is put into the context by the gRPC interceptor. Nothing personal is logged (the catalog holds products only; the database URL is never logged) | stdout -> Alloy -> Loki; OTLP -> Alloy -> Loki |
+| **Profiles** | Pyroscope Go SDK (CPU, alloc/in-use objects and space, goroutines, mutex, block), only with `PYROSCOPE_ADDR`; tags `service_name`, `version`, `environment` | Pyroscope |
+
+**Telemetry contract** (the code is `internal/obs`, the same package in every Go service): telemetry is on only if `OTEL_EXPORTER_OTLP_ENDPOINT` is a valid absolute http(s) URL; `OTEL_SDK_DISABLED=true` forces everything off (profiling too); profiling only with `PYROSCOPE_ADDR`. Start never waits for the collector (the exporters connect in the background) and on SIGTERM the flush is cut off after 4 s, so a blackholed collector cannot hold the process (unit-tested with a listener that never answers: start and shutdown both return within the bound).
+
+**Resource attributes** on every signal: `service.name` (`OTEL_SERVICE_NAME`, default `product-catalog-service`), `service.version` (`SERVICE_VERSION`, else build info, else `dev`), `service.namespace=everly`, `deployment.environment` (`DEPLOYMENT_ENVIRONMENT`, default `local`), `service.instance.id` (hostname). `OTEL_RESOURCE_ATTRIBUTES` is applied last.
+
+**Log shape** (one shape for all services): `timestamp` (RFC 3339, UTC, milliseconds), `severity` (`debug`, `info`, `warning`, `error`), `message`, `service`, `version`, `trace_id` and `span_id` (hex, only while a valid span is active, never empty or all zeros), `request_id` (when the caller sent one), `error` (string, on errors), plus the call's own fields (for example `order_id`). Level from `LOG_LEVEL`. `trace_id`/`span_id` come from the context of the log call: handlers and clients log with `log.WithContext(ctx)`, the formatter reads the span from it. Calls without a context (startup, background work) have no ids. No card data, tokens or e-mail addresses are logged.
+
+**Startup and version**: the first line is `message: "starting"` with `version`, `commit` and `environment`; `version`/`commit` come from `SERVICE_VERSION`, ldflags `-X <module>/internal/obs.Version=` / `.Commit=`, or the VCS data Go embeds (no Dockerfile change was made: without any of them a container image reports `version: "dev"`, `commit: "unknown"`). Panics are logged as one JSON line (`message: "panic"`, `error`) before the process dies; a startup error is one JSON error line, exit 1.
+
+**Shutdown**: SIGTERM/SIGINT marks every health service `NOT_SERVING`, drains in-flight RPCs for at most 5 s (was 10 s), then flushes telemetry (cut off after 4 s), so the process exits 0 inside 10 s even with an unreachable collector (integration-tested with a listener that never answers: 4.0 s). **pprof** is off. `PPROF_ADDR=127.0.0.1:6060` starts a separate listener; it is never on the metrics port.
 
 Every series carries `job="product-catalog-service"` (from `service.name`) and `instance=<pod name>` (`service.instance.id`), which is what the Grafana dashboards select on. Logs land in Loki with `service_name="product-catalog-service"` and trace/span ids, so a log line links to its trace.
+
+**Verification status** (observability step 3): unit-tested (`go test ./cmd/... ./internal/...`) and, against a throwaway Postgres, `go test -tags integration ./tests/integration/` (goose migrations, seed, SIGTERM exit 0, `OTEL_SDK_DISABLED`, blackholed collector). Not run: the compose stack, a live collector or Pyroscope, an image build, the e2e suite (`tests/e2e`).
 
 ## Running locally
 
@@ -317,7 +335,7 @@ protoc --go_out=. --go_opt=paths=source_relative \
 
 ## Shutdown
 
-`SIGTERM` or `SIGINT`: all health services go `NOT_SERVING`, the gRPC server stops accepting RPCs and waits up to 10 s for in-flight ones (`GracefulStop`), then closes what is left; telemetry is flushed and the process **exits 0**. A signal during start-up (before the database is ready) also exits 0. Run: `TestServer_SIGTERMExitsZero` (real binary, throwaway Postgres) and the `serve` unit tests.
+`SIGTERM` or `SIGINT`: all health services go `NOT_SERVING`, the gRPC server stops accepting RPCs and waits up to 5 s for in-flight ones (`GracefulStop`), then closes what is left; telemetry is flushed (cut off after 4 s) and the process **exits 0**. A signal during start-up (before the database is ready) also exits 0. Run: `TestServer_SIGTERMExitsZero` and `TestServer_BlackholedCollectorDoesNotBlockExit` (real binary, throwaway Postgres) and the `serve` unit tests.
 
 ## Known limitations
 
