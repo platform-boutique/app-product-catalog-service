@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -121,7 +122,9 @@ func filterProducts(all []*pb.Product, req *pb.ListProductsRequest) (*pb.ListPro
 	}
 	sort.SliceStable(matches, func(i, j int) bool { return less(matches[i], matches[j]) })
 
-	resp := &pb.ListProductsResponse{Total: int32(len(matches)), Page: page, PageSize: size}
+	// total is clamped so the int -> int32 conversion cannot overflow (G115)
+	total := int32(min(len(matches), math.MaxInt32))
+	resp := &pb.ListProductsResponse{Total: total, Page: page, PageSize: size}
 	start := int64(page-1) * int64(size)
 	if start < int64(len(matches)) {
 		end := start + int64(size)
