@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -29,7 +30,7 @@ func init() {
 func InitDB(ctx context.Context) error {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		log.Fatal("DATABASE_URL is not set")
+		return errors.New("DATABASE_URL is not set") // main logs it as one JSON error line and exits 1
 	}
 
 	p, err := pgxpool.New(ctx, dsn)

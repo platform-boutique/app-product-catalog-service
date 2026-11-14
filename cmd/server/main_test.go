@@ -1,97 +1,115 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"errors"
+	"encoding/json"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
+	"product-catalog-service/internal/catalog"
+	"product-catalog-service/internal/obs"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
-func clearTelemetryEnv(t *testing.T) {
-	t.Helper()
-	for _, k := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "COLLECTOR_SERVICE_ADDR", "OTEL_SDK_DISABLED", "ENABLE_TRACING", "PYROSCOPE_ADDR", "ENABLE_PROFILING"} {
+func env(m map[string]string) obs.Getenv { return func(k string) string { return m[k] } }
+
+// TestEnvContract is this service's view of the telemetry contract (OBS-01, OBS-04). The full matrix is in
+// internal/obs/env_test.go; this table pins the variable names main relies on and the legacy ones it ignores.
+func TestEnvContract(t *testing.T) {
+	const ep, py = "http://alloy:4317", "http://alloy:4040"
+	cases := []struct {
+		name      string
+		env       map[string]string
+		telemetry string // expected OTLP endpoint, "" = off
+		profiling string // expected Pyroscope address, "" = off
+	}{
+		{"nothing set", nil, "", ""},
+		{"endpoint", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep}, ep, ""},
+		{"blank endpoint", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "  "}, "", ""},
+		{"endpoint without scheme is off, not a crash", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "alloy:4317"}, "", ""},
+		{"legacy addr alone does not switch it on", map[string]string{"COLLECTOR_SERVICE_ADDR": "alloy:4317"}, "", ""},
+		{"legacy addr does not replace the endpoint", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep, "COLLECTOR_SERVICE_ADDR": "other:4317"}, ep, ""},
+		{"sdk disabled beats endpoint and pyroscope", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep, "PYROSCOPE_ADDR": py, "OTEL_SDK_DISABLED": "true"}, "", ""},
+		{"sdk disabled, upper case and padded", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep, "OTEL_SDK_DISABLED": " TRUE "}, "", ""},
+		{"sdk disabled false", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep, "OTEL_SDK_DISABLED": "false"}, ep, ""},
+		{"ENABLE_TRACING=0 is no longer read", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep, "ENABLE_TRACING": "0"}, ep, ""},
+		{"ENABLE_PROFILING=1 alone starts nothing", map[string]string{"ENABLE_PROFILING": "1"}, "", ""},
+		{"pyroscope", map[string]string{"PYROSCOPE_ADDR": py}, "", py},
+		{"pyroscope, ENABLE_PROFILING=0", map[string]string{"PYROSCOPE_ADDR": py, "ENABLE_PROFILING": "0"}, "", ""},
+		{"blank pyroscope addr", map[string]string{"PYROSCOPE_ADDR": " "}, "", ""},
+		{"pyroscope without scheme", map[string]string{"PYROSCOPE_ADDR": "alloy:4040"}, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := obs.LoadSettings("product-catalog-service", env(c.env))
+			if s.OTLPEndpoint != c.telemetry || s.TelemetryOn() != (c.telemetry != "") {
+				t.Errorf("telemetry endpoint = %q (on=%v), want %q", s.OTLPEndpoint, s.TelemetryOn(), c.telemetry)
+			}
+			if s.PyroscopeAddr != c.profiling || s.ProfilingOn() != (c.profiling != "") {
+				t.Errorf("profiling addr = %q (on=%v), want %q", s.PyroscopeAddr, s.ProfilingOn(), c.profiling)
+			}
+		})
+	}
+}
+
+func TestEnvDefaultsAndResource(t *testing.T) {
+	s := obs.LoadSettings("product-catalog-service", env(map[string]string{"HOSTNAME": "catalog-0"}))
+	if s.Service != "product-catalog-service" || s.Environment != "local" || s.Instance != "catalog-0" || s.MetricsAddr != ":9090" || s.PprofAddr != "" {
+		t.Fatalf("defaults: %+v", s)
+	}
+	s = obs.LoadSettings("product-catalog-service", env(map[string]string{"DEPLOYMENT_ENVIRONMENT": "dev", "METRICS_PORT": "9191", "PPROF_ADDR": "127.0.0.1:6060", "SERVICE_VERSION": "1.2.3"}))
+	if s.Environment != "dev" || s.MetricsAddr != ":9191" || s.PprofAddr != "127.0.0.1:6060" || s.Version != "1.2.3" {
+		t.Fatalf("overrides: %+v", s)
+	}
+}
+
+// Start the kit the way main does (same loggers, no listener): the process logger and the catalog package's
+// logger (seed, migrations, loader) must both write the contract's shape, not logrus' default keys.
+func TestStartWiringGivesBothLoggersTheContractShape(t *testing.T) {
+	for _, k := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_SDK_DISABLED", "PYROSCOPE_ADDR", "ENABLE_PROFILING", "LOG_LEVEL", "SERVICE_VERSION"} {
 		t.Setenv(k, "")
 	}
-}
+	var out bytes.Buffer
+	x := obs.Start(context.Background(), obs.Options{
+		Service: "product-catalog-service", Loggers: []*logrus.Logger{log, catalog.Logger()}, Out: &out, NoMetricsServer: true,
+		Registerer: prometheus.NewRegistry(), Gatherer: prometheus.NewRegistry(),
+	})
+	defer x.Shutdown()
+	catalog.Logger().Info("schema ready") // what migrate.go / seed.go do
 
-func TestTelemetryOffByDefault(t *testing.T) {
-	clearTelemetryEnv(t)
-	if ep := otlpEndpoint(); ep != "" {
-		t.Fatalf("endpoint %q with everything unset", ep)
+	var lines []map[string]any
+	for _, ln := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(ln), &m); err != nil {
+			t.Fatalf("not JSON: %v: %s", err, ln)
+		}
+		lines = append(lines, m)
 	}
-	shutdown, err := initTelemetry(context.Background(), "x", log)
-	if !errors.Is(err, errTelemetryOff) {
-		t.Fatalf("initTelemetry err = %v, want errTelemetryOff", err)
+	if lines[0]["message"] != "starting" || lines[0]["commit"] == nil {
+		t.Fatalf("first line: %v", lines[0])
 	}
-	if err := shutdown(context.Background()); err != nil {
-		t.Fatalf("no-op shutdown: %v", err)
+	last := lines[len(lines)-1]
+	if last["message"] != "schema ready" {
+		t.Fatalf("last line: %v", last)
 	}
-	if _, on := profilingConfig(); on {
-		t.Fatal("profiling on with everything unset")
-	}
-}
-
-func TestTelemetrySwitches(t *testing.T) {
-	const ep = "http://alloy:4317"
-	cases := []struct {
-		name string
-		env  map[string]string
-		want string
-	}{
-		{"endpoint", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep}, ep},
-		{"blank endpoint", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "  "}, ""},
-		{"legacy addr alone does not switch it on", map[string]string{"COLLECTOR_SERVICE_ADDR": "alloy:4317"}, ""},
-		{"legacy addr does not replace the endpoint", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep, "COLLECTOR_SERVICE_ADDR": "other:4317"}, ep},
-		{"sdk disabled", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep, "OTEL_SDK_DISABLED": "true"}, ""},
-		{"sdk disabled upper", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep, "OTEL_SDK_DISABLED": "TRUE"}, ""},
-		{"sdk disabled false", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep, "OTEL_SDK_DISABLED": "false"}, ep},
-		{"enable_tracing 0", map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": ep, "ENABLE_TRACING": "0"}, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			clearTelemetryEnv(t)
-			for k, v := range c.env {
-				t.Setenv(k, v)
+	for _, m := range lines {
+		for _, k := range []string{"timestamp", "severity", "message", "service", "version"} {
+			if m[k] == nil {
+				t.Errorf("line lacks %q: %v", k, m)
 			}
-			if got := otlpEndpoint(); got != c.want {
-				t.Fatalf("otlpEndpoint() = %q, want %q", got, c.want)
-			}
-			_, err := initTelemetry(context.Background(), "x", log)
-			if (c.want == "") != errors.Is(err, errTelemetryOff) {
-				t.Fatalf("initTelemetry err = %v for endpoint %q", err, c.want)
-			}
-		})
-	}
-}
-
-func TestProfilingConfig(t *testing.T) {
-	cases := []struct {
-		name   string
-		env    map[string]string
-		wantOn bool
-	}{
-		{"nothing", nil, false},
-		{"enable alone", map[string]string{"ENABLE_PROFILING": "1"}, false},
-		{"addr", map[string]string{"PYROSCOPE_ADDR": "http://alloy:4040"}, true},
-		{"addr, profiling 0", map[string]string{"PYROSCOPE_ADDR": "http://alloy:4040", "ENABLE_PROFILING": "0"}, false},
-		{"blank addr", map[string]string{"PYROSCOPE_ADDR": " "}, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			clearTelemetryEnv(t)
-			for k, v := range c.env {
-				t.Setenv(k, v)
-			}
-			if _, on := profilingConfig(); on != c.wantOn {
-				t.Fatalf("profiling on = %v, want %v", on, c.wantOn)
-			}
-		})
+		}
+		if m["service"] != "product-catalog-service" || m["time"] != nil || m["level"] != nil || m["msg"] != nil {
+			t.Errorf("wrong shape: %v", m)
+		}
 	}
 }
 
@@ -107,7 +125,7 @@ func startServe(t *testing.T, drain time.Duration) (cancel context.CancelFunc, r
 	healthpb.RegisterHealthServer(srv, h)
 	ctx, cancel := context.WithCancel(context.Background())
 	res := make(chan error, 1)
-	go func() { res <- serve(ctx, srv, l, h, nil, drain) }()
+	go func() { res <- serve(ctx, srv, l, h, drain) }()
 	conn, err = grpc.NewClient(l.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatal(err)

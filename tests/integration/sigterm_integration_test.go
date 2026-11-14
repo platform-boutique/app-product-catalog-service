@@ -4,7 +4,8 @@ package integration
 
 // Builds the real server binary and checks the process contract against a throwaway Postgres
 // (PG_ADMIN_URL, see migrate_integration_test.go): SIGTERM -> graceful stop -> exit code 0, and the
-// telemetry switches (legacy COLLECTOR_SERVICE_ADDR alone, OTEL_SDK_DISABLED=true).
+// telemetry switches (legacy COLLECTOR_SERVICE_ADDR alone, OTEL_SDK_DISABLED=true) and the exit bound with a
+// collector that never answers.
 
 import (
 	"bytes"
@@ -136,13 +137,13 @@ func TestServer_SIGTERMExitsZero(t *testing.T) {
 	}
 	t.Logf("exited 0, %v after SIGTERM", time.Since(start))
 	log := out.String()
-	for _, want := range []string{"shutdown signal received", "shutdown complete", "telemetry off", "COLLECTOR_SERVICE_ADDR is ignored"} {
+	for _, want := range []string{"shutdown signal received", "shutdown complete", "telemetry disabled (OTEL_EXPORTER_OTLP_ENDPOINT is not set)"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("log lacks %q:\n%s", want, log)
 		}
 	}
-	if strings.Contains(log, "telemetry enabled") {
-		t.Errorf("telemetry was switched on by COLLECTOR_SERVICE_ADDR:\n%s", log)
+	if strings.Contains(log, "telemetry enabled") || strings.Contains(log, "COLLECTOR_SERVICE_ADDR") {
+		t.Errorf("telemetry was switched on by COLLECTOR_SERVICE_ADDR, or the legacy variable is still mentioned:\n%s", log)
 	}
 }
 
@@ -157,7 +158,59 @@ func TestServer_OtelSdkDisabledBeatsEndpoint(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("no exit after SIGTERM")
 	}
-	if log := out.String(); strings.Contains(log, "telemetry enabled") || !strings.Contains(log, "telemetry off") {
+	if log := out.String(); strings.Contains(log, "telemetry enabled") || !strings.Contains(log, "telemetry disabled (OTEL_SDK_DISABLED=true)") {
 		t.Errorf("OTEL_SDK_DISABLED=true did not force telemetry off:\n%s", log)
+	}
+}
+
+// A collector and a Pyroscope that accept the connection and never answer must not hold the process
+// (CODE-04, OBS-04): start does not wait for them and SIGTERM exits 0 inside 10 s (drain 5 s + flush cut at 4 s).
+func TestServer_BlackholedCollectorDoesNotBlockExit(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held []net.Conn
+	var mu sync.Mutex
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, c) // never read, never answered
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		for _, c := range held {
+			_ = c.Close()
+		}
+		mu.Unlock()
+	})
+	hole := "http://" + ln.Addr().String()
+	cmd, out, exited, _ := runServer(t, "OTEL_EXPORTER_OTLP_ENDPOINT="+hole, "PYROSCOPE_ADDR="+hole)
+	start := time.Now()
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-exited:
+		if err != nil {
+			t.Fatalf("exit after SIGTERM: %v (want exit code 0)\n%s", err, out.String())
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatalf("no exit within 20s of SIGTERM\n%s", out.String())
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("exit took %v with a blackholed collector, want under 10s (CODE-04)", d)
+	} else {
+		t.Logf("exited 0, %v after SIGTERM with a blackholed collector", d)
+	}
+	if log := out.String(); !strings.Contains(log, "telemetry enabled") {
+		t.Errorf("telemetry should have been enabled for this test:\n%s", log)
 	}
 }
