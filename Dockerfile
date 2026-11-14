@@ -2,6 +2,9 @@
 # BuildKit sets TARGETOS/TARGETARCH from --platform, so the same Dockerfile builds amd64 and arm64.
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 ARG TARGETOS TARGETARCH
+# Build identity, linked into internal/obs (read by the service at start)
+ARG SERVICE_VERSION=dev
+ARG SERVICE_COMMIT=unknown
 
 WORKDIR /app
 
@@ -10,7 +13,7 @@ RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X product-catalog-service/internal/obs.Version=${SERVICE_VERSION} -X product-catalog-service/internal/obs.Commit=${SERVICE_COMMIT}" \
     -o /product-catalog-service \
     ./cmd/server
 
