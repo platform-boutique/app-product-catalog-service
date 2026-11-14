@@ -1,5 +1,6 @@
 # Built binary
 product-catalog-service
+/server
 /bin/
 
 # Environment files — never commit secrets
