@@ -23,7 +23,7 @@ const advisoryLockID int64 = 0x70635f63617431 // "pc_cat1"
 // while holding a Postgres session-level advisory lock. It is a no-op when the schema is current.
 func Migrate(ctx context.Context, p *pgxpool.Pool) error {
 	sqlDB := stdlib.OpenDBFromPool(p)
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 
 	locker, err := lock.NewPostgresSessionLocker(
 		lock.WithLockID(advisoryLockID),

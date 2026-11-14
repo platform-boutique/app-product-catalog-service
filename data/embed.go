@@ -1,5 +1,5 @@
 // Package data embeds the catalog seed files so the service binary carries its own data.
-// go:embed cannot reach outside a package directory, hence this tiny package next to seed/.
+// The go:embed directive cannot reach outside a package directory, hence this tiny package next to seed/.
 // Only the JSON files are embedded (SOURCES.md stays out of the binary).
 package data
 
