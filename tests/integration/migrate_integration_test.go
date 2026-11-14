@@ -148,7 +148,7 @@ func TestMigrate_FreshDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	var resp pb.ListProductsResponse
-	if err := catalog.LoadCatalog(&resp); err != nil {
+	if err := catalog.LoadCatalog(context.Background(), &resp); err != nil {
 		t.Fatal(err)
 	}
 	var dress *pb.Product
@@ -168,7 +168,7 @@ func TestMigrate_FreshDatabase(t *testing.T) {
 		fmt.Sprint(dress.Categories) != "[women clothing womens-dresses]" {
 		t.Errorf("unexpected product: %v", dress)
 	}
-	depts, err := catalog.LoadDepartments()
+	depts, err := catalog.LoadDepartments(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestMigrate_ReseedUpdatesRatingAndReviewCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	var resp pb.ListProductsResponse
-	if err := catalog.LoadCatalog(&resp); err != nil {
+	if err := catalog.LoadCatalog(context.Background(), &resp); err != nil {
 		t.Fatal(err)
 	}
 	for _, pr := range resp.Products {

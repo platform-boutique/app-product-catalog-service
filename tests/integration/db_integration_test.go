@@ -35,7 +35,7 @@ func TestLoadCatalog_ReturnsProducts(t *testing.T) {
 	}
 
 	var resp pb.ListProductsResponse
-	if err := catalog.LoadCatalog(&resp); err != nil {
+	if err := catalog.LoadCatalog(context.Background(), &resp); err != nil {
 		t.Fatalf("LoadCatalog failed: %v", err)
 	}
 	if len(resp.Products) == 0 {
