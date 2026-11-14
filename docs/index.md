@@ -7,7 +7,7 @@ A gRPC service that exposes the product catalog for the platform-demo e-commerce
 </div>
 
 <div class="pd-facts" markdown>
-<div><span>Runtime</span><strong>Go 1.25</strong><small>Go</small></div>
+<div><span>Runtime</span><strong>Go 1.26</strong><small>Go</small></div>
 <div><span>Listens on</span><strong>3550</strong><small>gRPC</small></div>
 <div><span>State</span><strong>Stateless</strong></div>
 <div><span>Image</span><strong>product-catalog-service</strong><small>mladenovskistefan/</small></div>
@@ -31,7 +31,7 @@ flowchart LR
 
 | | |
 |---|---|
-| **Language / runtime** | Go 1.25 (static binary, `CGO_ENABLED=0`), `pgx/v5` |
+| **Language / runtime** | Go 1.26 (static binary, `CGO_ENABLED=0`), `pgx/v5` |
 | **Image** | `mladenovskistefan/product-catalog-service` |
 | **Protocol / port** | gRPC (HTTP/2, plaintext) on `3550` |
 | **Metrics** | Prometheus `/metrics` on `9090` (`METRICS_PORT`), scraped by Alloy; the same registry is also pushed over OTLP/gRPC when an endpoint is set |

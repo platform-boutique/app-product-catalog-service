@@ -4,7 +4,7 @@ Multi-stage [`Dockerfile`](https://github.com/platform-boutique/app-product-cata
 
 | Stage | Base | What happens |
 |---|---|---|
-| builder | `golang:1.25-alpine` | `go mod download`, then `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" ./cmd/server` |
+| builder | `golang:1.26-alpine` | `go mod download`, then `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" ./cmd/server` |
 | runtime | `alpine:3.21` | single binary at `/app/product-catalog-service` (Alpine rather than `scratch` so pprof/Pyroscope have a normal userland) |
 
 - **Entrypoint:** `/app/product-catalog-service`. `GOTRACEBACK=single`.
