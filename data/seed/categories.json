@@ -1,0 +1,68 @@
+[
+  {
+    "id": "women",
+    "name": "Women",
+    "description": "Dresses, tops, shoes and handbags for women.",
+    "source_categories": [
+      "tops",
+      "womens-dresses",
+      "womens-shoes",
+      "womens-bags"
+    ]
+  },
+  {
+    "id": "men",
+    "name": "Men",
+    "description": "Shirts and shoes for men.",
+    "source_categories": [
+      "mens-shirts",
+      "mens-shoes"
+    ]
+  },
+  {
+    "id": "accessories",
+    "name": "Accessories",
+    "description": "Watches, jewellery and sunglasses.",
+    "source_categories": [
+      "mens-watches",
+      "womens-watches",
+      "womens-jewellery",
+      "sunglasses"
+    ]
+  },
+  {
+    "id": "beauty",
+    "name": "Beauty",
+    "description": "Make-up, skin care and fragrances.",
+    "source_categories": [
+      "beauty",
+      "skin-care",
+      "fragrances"
+    ]
+  },
+  {
+    "id": "home",
+    "name": "Home",
+    "description": "Furniture and home decoration.",
+    "source_categories": [
+      "furniture",
+      "home-decoration"
+    ]
+  },
+  {
+    "id": "kitchen",
+    "name": "Kitchen",
+    "description": "Cookware, utensils, small appliances and tableware.",
+    "source_categories": [
+      "kitchen-accessories"
+    ]
+  },
+  {
+    "id": "sports",
+    "name": "Sports",
+    "description": "Balls, bats, rackets and other sports gear.",
+    "source_categories": [
+      "sports-accessories"
+    ]
+  }
+]

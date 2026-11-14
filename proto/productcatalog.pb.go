@@ -21,6 +21,61 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ProductSort int32
+
+const (
+	ProductSort_PRODUCT_SORT_UNSPECIFIED ProductSort = 0 // same as PRODUCT_SORT_NAME_ASC
+	ProductSort_PRODUCT_SORT_NAME_ASC    ProductSort = 1
+	ProductSort_PRODUCT_SORT_PRICE_ASC   ProductSort = 2
+	ProductSort_PRODUCT_SORT_PRICE_DESC  ProductSort = 3
+	ProductSort_PRODUCT_SORT_RATING_DESC ProductSort = 4
+)
+
+// Enum value maps for ProductSort.
+var (
+	ProductSort_name = map[int32]string{
+		0: "PRODUCT_SORT_UNSPECIFIED",
+		1: "PRODUCT_SORT_NAME_ASC",
+		2: "PRODUCT_SORT_PRICE_ASC",
+		3: "PRODUCT_SORT_PRICE_DESC",
+		4: "PRODUCT_SORT_RATING_DESC",
+	}
+	ProductSort_value = map[string]int32{
+		"PRODUCT_SORT_UNSPECIFIED": 0,
+		"PRODUCT_SORT_NAME_ASC":    1,
+		"PRODUCT_SORT_PRICE_ASC":   2,
+		"PRODUCT_SORT_PRICE_DESC":  3,
+		"PRODUCT_SORT_RATING_DESC": 4,
+	}
+)
+
+func (x ProductSort) Enum() *ProductSort {
+	p := new(ProductSort)
+	*p = x
+	return p
+}
+
+func (x ProductSort) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ProductSort) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_productcatalog_proto_enumTypes[0].Descriptor()
+}
+
+func (ProductSort) Type() protoreflect.EnumType {
+	return &file_proto_productcatalog_proto_enumTypes[0]
+}
+
+func (x ProductSort) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ProductSort.Descriptor instead.
+func (ProductSort) EnumDescriptor() ([]byte, []int) {
+	return file_proto_productcatalog_proto_rawDescGZIP(), []int{0}
+}
+
 type Empty struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -118,13 +173,23 @@ func (x *Money) GetNanos() int32 {
 }
 
 type Product struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
-	Picture       string                 `protobuf:"bytes,4,opt,name=picture,proto3" json:"picture,omitempty"`
-	PriceUsd      *Money                 `protobuf:"bytes,5,opt,name=price_usd,json=priceUsd,proto3" json:"price_usd,omitempty"`
-	Categories    []string               `protobuf:"bytes,6,rep,name=categories,proto3" json:"categories,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Picture     string                 `protobuf:"bytes,4,opt,name=picture,proto3" json:"picture,omitempty"`
+	PriceUsd    *Money                 `protobuf:"bytes,5,opt,name=price_usd,json=priceUsd,proto3" json:"price_usd,omitempty"`
+	Categories  []string               `protobuf:"bytes,6,rep,name=categories,proto3" json:"categories,omitempty"`
+	// Fields 7-15 were added for the general store (additive; older clients ignore them).
+	Brand         string   `protobuf:"bytes,7,opt,name=brand,proto3" json:"brand,omitempty"`
+	Rating        float64  `protobuf:"fixed64,8,opt,name=rating,proto3" json:"rating,omitempty"`                             // average rating 0-5
+	ReviewCount   int32    `protobuf:"varint,9,opt,name=review_count,json=reviewCount,proto3" json:"review_count,omitempty"` // 0 here; reviews live in review-service
+	Stock         int32    `protobuf:"varint,10,opt,name=stock,proto3" json:"stock,omitempty"`
+	WeightGrams   int32    `protobuf:"varint,11,opt,name=weight_grams,json=weightGrams,proto3" json:"weight_grams,omitempty"`
+	Tags          []string `protobuf:"bytes,12,rep,name=tags,proto3" json:"tags,omitempty"`
+	Images        []string `protobuf:"bytes,13,rep,name=images,proto3" json:"images,omitempty"`         // relative paths served by frontend, e.g. /static/img/products/<id>-1.webp
+	Thumbnail     string   `protobuf:"bytes,14,opt,name=thumbnail,proto3" json:"thumbnail,omitempty"`   // relative path of the small image
+	Department    string   `protobuf:"bytes,15,opt,name=department,proto3" json:"department,omitempty"` // Category.id of the product's department, "" if none
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -201,9 +266,76 @@ func (x *Product) GetCategories() []string {
 	return nil
 }
 
+func (x *Product) GetBrand() string {
+	if x != nil {
+		return x.Brand
+	}
+	return ""
+}
+
+func (x *Product) GetRating() float64 {
+	if x != nil {
+		return x.Rating
+	}
+	return 0
+}
+
+func (x *Product) GetReviewCount() int32 {
+	if x != nil {
+		return x.ReviewCount
+	}
+	return 0
+}
+
+func (x *Product) GetStock() int32 {
+	if x != nil {
+		return x.Stock
+	}
+	return 0
+}
+
+func (x *Product) GetWeightGrams() int32 {
+	if x != nil {
+		return x.WeightGrams
+	}
+	return 0
+}
+
+func (x *Product) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+func (x *Product) GetImages() []string {
+	if x != nil {
+		return x.Images
+	}
+	return nil
+}
+
+func (x *Product) GetThumbnail() string {
+	if x != nil {
+		return x.Thumbnail
+	}
+	return ""
+}
+
+func (x *Product) GetDepartment() string {
+	if x != nil {
+		return x.Department
+	}
+	return ""
+}
+
 type ListProductsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Products      []*Product             `protobuf:"bytes,1,rep,name=products,proto3" json:"products,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Products []*Product             `protobuf:"bytes,1,rep,name=products,proto3" json:"products,omitempty"`
+	// Set only by ListProductsFiltered (ListProducts returns everything and leaves them 0).
+	Total         int32 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`                       // number of matches over all pages
+	Page          int32 `protobuf:"varint,3,opt,name=page,proto3" json:"page,omitempty"`                         // effective page (1-based)
+	PageSize      int32 `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"` // effective page size
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -243,6 +375,27 @@ func (x *ListProductsResponse) GetProducts() []*Product {
 		return x.Products
 	}
 	return nil
+}
+
+func (x *ListProductsResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *ListProductsResponse) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListProductsResponse) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
 }
 
 type GetProductRequest struct {
@@ -377,6 +530,194 @@ func (x *SearchProductsResponse) GetResults() []*Product {
 	return nil
 }
 
+type ListProductsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Department    string                 `protobuf:"bytes,1,opt,name=department,proto3" json:"department,omitempty"` // Category.id; "" = all departments
+	Query         string                 `protobuf:"bytes,2,opt,name=query,proto3" json:"query,omitempty"`           // case-insensitive substring over name, description, brand, tags; "" = no filter
+	Sort          ProductSort            `protobuf:"varint,3,opt,name=sort,proto3,enum=hipstershop.ProductSort" json:"sort,omitempty"`
+	Page          int32                  `protobuf:"varint,4,opt,name=page,proto3" json:"page,omitempty"`                         // 1-based; 0 = 1
+	PageSize      int32                  `protobuf:"varint,5,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"` // 0 = 24, values above 100 are capped at 100
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListProductsRequest) Reset() {
+	*x = ListProductsRequest{}
+	mi := &file_proto_productcatalog_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListProductsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListProductsRequest) ProtoMessage() {}
+
+func (x *ListProductsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_productcatalog_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListProductsRequest.ProtoReflect.Descriptor instead.
+func (*ListProductsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_productcatalog_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ListProductsRequest) GetDepartment() string {
+	if x != nil {
+		return x.Department
+	}
+	return ""
+}
+
+func (x *ListProductsRequest) GetQuery() string {
+	if x != nil {
+		return x.Query
+	}
+	return ""
+}
+
+func (x *ListProductsRequest) GetSort() ProductSort {
+	if x != nil {
+		return x.Sort
+	}
+	return ProductSort_PRODUCT_SORT_UNSPECIFIED
+}
+
+func (x *ListProductsRequest) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListProductsRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+type Category struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	ProductCount  int32                  `protobuf:"varint,4,opt,name=product_count,json=productCount,proto3" json:"product_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Category) Reset() {
+	*x = Category{}
+	mi := &file_proto_productcatalog_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Category) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Category) ProtoMessage() {}
+
+func (x *Category) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_productcatalog_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Category.ProtoReflect.Descriptor instead.
+func (*Category) Descriptor() ([]byte, []int) {
+	return file_proto_productcatalog_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *Category) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Category) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Category) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *Category) GetProductCount() int32 {
+	if x != nil {
+		return x.ProductCount
+	}
+	return 0
+}
+
+type ListCategoriesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Categories    []*Category            `protobuf:"bytes,1,rep,name=categories,proto3" json:"categories,omitempty"` // in display order
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCategoriesResponse) Reset() {
+	*x = ListCategoriesResponse{}
+	mi := &file_proto_productcatalog_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCategoriesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCategoriesResponse) ProtoMessage() {}
+
+func (x *ListCategoriesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_productcatalog_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCategoriesResponse.ProtoReflect.Descriptor instead.
+func (*ListCategoriesResponse) Descriptor() ([]byte, []int) {
+	return file_proto_productcatalog_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ListCategoriesResponse) GetCategories() []*Category {
+	if x != nil {
+		return x.Categories
+	}
+	return nil
+}
+
 var File_proto_productcatalog_proto protoreflect.FileDescriptor
 
 const file_proto_productcatalog_proto_rawDesc = "" +
@@ -386,7 +727,7 @@ const file_proto_productcatalog_proto_rawDesc = "" +
 	"\x05Money\x12#\n" +
 	"\rcurrency_code\x18\x01 \x01(\tR\fcurrencyCode\x12\x14\n" +
 	"\x05units\x18\x02 \x01(\x03R\x05units\x12\x14\n" +
-	"\x05nanos\x18\x03 \x01(\x05R\x05nanos\"\xba\x01\n" +
+	"\x05nanos\x18\x03 \x01(\x05R\x05nanos\"\xae\x03\n" +
 	"\aProduct\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
@@ -395,20 +736,60 @@ const file_proto_productcatalog_proto_rawDesc = "" +
 	"\tprice_usd\x18\x05 \x01(\v2\x12.hipstershop.MoneyR\bpriceUsd\x12\x1e\n" +
 	"\n" +
 	"categories\x18\x06 \x03(\tR\n" +
-	"categories\"H\n" +
+	"categories\x12\x14\n" +
+	"\x05brand\x18\a \x01(\tR\x05brand\x12\x16\n" +
+	"\x06rating\x18\b \x01(\x01R\x06rating\x12!\n" +
+	"\freview_count\x18\t \x01(\x05R\vreviewCount\x12\x14\n" +
+	"\x05stock\x18\n" +
+	" \x01(\x05R\x05stock\x12!\n" +
+	"\fweight_grams\x18\v \x01(\x05R\vweightGrams\x12\x12\n" +
+	"\x04tags\x18\f \x03(\tR\x04tags\x12\x16\n" +
+	"\x06images\x18\r \x03(\tR\x06images\x12\x1c\n" +
+	"\tthumbnail\x18\x0e \x01(\tR\tthumbnail\x12\x1e\n" +
+	"\n" +
+	"department\x18\x0f \x01(\tR\n" +
+	"department\"\x8f\x01\n" +
 	"\x14ListProductsResponse\x120\n" +
-	"\bproducts\x18\x01 \x03(\v2\x14.hipstershop.ProductR\bproducts\"#\n" +
+	"\bproducts\x18\x01 \x03(\v2\x14.hipstershop.ProductR\bproducts\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x12\n" +
+	"\x04page\x18\x03 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\"#\n" +
 	"\x11GetProductRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"-\n" +
 	"\x15SearchProductsRequest\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\"H\n" +
 	"\x16SearchProductsResponse\x12.\n" +
-	"\aresults\x18\x01 \x03(\v2\x14.hipstershop.ProductR\aresults2\x83\x02\n" +
+	"\aresults\x18\x01 \x03(\v2\x14.hipstershop.ProductR\aresults\"\xaa\x01\n" +
+	"\x13ListProductsRequest\x12\x1e\n" +
+	"\n" +
+	"department\x18\x01 \x01(\tR\n" +
+	"department\x12\x14\n" +
+	"\x05query\x18\x02 \x01(\tR\x05query\x12,\n" +
+	"\x04sort\x18\x03 \x01(\x0e2\x18.hipstershop.ProductSortR\x04sort\x12\x12\n" +
+	"\x04page\x18\x04 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x05 \x01(\x05R\bpageSize\"u\n" +
+	"\bCategory\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12#\n" +
+	"\rproduct_count\x18\x04 \x01(\x05R\fproductCount\"O\n" +
+	"\x16ListCategoriesResponse\x125\n" +
+	"\n" +
+	"categories\x18\x01 \x03(\v2\x15.hipstershop.CategoryR\n" +
+	"categories*\x9d\x01\n" +
+	"\vProductSort\x12\x1c\n" +
+	"\x18PRODUCT_SORT_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15PRODUCT_SORT_NAME_ASC\x10\x01\x12\x1a\n" +
+	"\x16PRODUCT_SORT_PRICE_ASC\x10\x02\x12\x1b\n" +
+	"\x17PRODUCT_SORT_PRICE_DESC\x10\x03\x12\x1c\n" +
+	"\x18PRODUCT_SORT_RATING_DESC\x10\x042\xaf\x03\n" +
 	"\x15ProductCatalogService\x12G\n" +
 	"\fListProducts\x12\x12.hipstershop.Empty\x1a!.hipstershop.ListProductsResponse\"\x00\x12D\n" +
 	"\n" +
 	"GetProduct\x12\x1e.hipstershop.GetProductRequest\x1a\x14.hipstershop.Product\"\x00\x12[\n" +
-	"\x0eSearchProducts\x12\".hipstershop.SearchProductsRequest\x1a#.hipstershop.SearchProductsResponse\"\x00B+Z)product-catalog-service/internal/genprotob\x06proto3"
+	"\x0eSearchProducts\x12\".hipstershop.SearchProductsRequest\x1a#.hipstershop.SearchProductsResponse\"\x00\x12]\n" +
+	"\x14ListProductsFiltered\x12 .hipstershop.ListProductsRequest\x1a!.hipstershop.ListProductsResponse\"\x00\x12K\n" +
+	"\x0eListCategories\x12\x12.hipstershop.Empty\x1a#.hipstershop.ListCategoriesResponse\"\x00B+Z)product-catalog-service/internal/genprotob\x06proto3"
 
 var (
 	file_proto_productcatalog_proto_rawDescOnce sync.Once
@@ -422,31 +803,42 @@ func file_proto_productcatalog_proto_rawDescGZIP() []byte {
 	return file_proto_productcatalog_proto_rawDescData
 }
 
-var file_proto_productcatalog_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_proto_productcatalog_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_proto_productcatalog_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_proto_productcatalog_proto_goTypes = []any{
-	(*Empty)(nil),                  // 0: hipstershop.Empty
-	(*Money)(nil),                  // 1: hipstershop.Money
-	(*Product)(nil),                // 2: hipstershop.Product
-	(*ListProductsResponse)(nil),   // 3: hipstershop.ListProductsResponse
-	(*GetProductRequest)(nil),      // 4: hipstershop.GetProductRequest
-	(*SearchProductsRequest)(nil),  // 5: hipstershop.SearchProductsRequest
-	(*SearchProductsResponse)(nil), // 6: hipstershop.SearchProductsResponse
+	(ProductSort)(0),               // 0: hipstershop.ProductSort
+	(*Empty)(nil),                  // 1: hipstershop.Empty
+	(*Money)(nil),                  // 2: hipstershop.Money
+	(*Product)(nil),                // 3: hipstershop.Product
+	(*ListProductsResponse)(nil),   // 4: hipstershop.ListProductsResponse
+	(*GetProductRequest)(nil),      // 5: hipstershop.GetProductRequest
+	(*SearchProductsRequest)(nil),  // 6: hipstershop.SearchProductsRequest
+	(*SearchProductsResponse)(nil), // 7: hipstershop.SearchProductsResponse
+	(*ListProductsRequest)(nil),    // 8: hipstershop.ListProductsRequest
+	(*Category)(nil),               // 9: hipstershop.Category
+	(*ListCategoriesResponse)(nil), // 10: hipstershop.ListCategoriesResponse
 }
 var file_proto_productcatalog_proto_depIdxs = []int32{
-	1, // 0: hipstershop.Product.price_usd:type_name -> hipstershop.Money
-	2, // 1: hipstershop.ListProductsResponse.products:type_name -> hipstershop.Product
-	2, // 2: hipstershop.SearchProductsResponse.results:type_name -> hipstershop.Product
-	0, // 3: hipstershop.ProductCatalogService.ListProducts:input_type -> hipstershop.Empty
-	4, // 4: hipstershop.ProductCatalogService.GetProduct:input_type -> hipstershop.GetProductRequest
-	5, // 5: hipstershop.ProductCatalogService.SearchProducts:input_type -> hipstershop.SearchProductsRequest
-	3, // 6: hipstershop.ProductCatalogService.ListProducts:output_type -> hipstershop.ListProductsResponse
-	2, // 7: hipstershop.ProductCatalogService.GetProduct:output_type -> hipstershop.Product
-	6, // 8: hipstershop.ProductCatalogService.SearchProducts:output_type -> hipstershop.SearchProductsResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	2,  // 0: hipstershop.Product.price_usd:type_name -> hipstershop.Money
+	3,  // 1: hipstershop.ListProductsResponse.products:type_name -> hipstershop.Product
+	3,  // 2: hipstershop.SearchProductsResponse.results:type_name -> hipstershop.Product
+	0,  // 3: hipstershop.ListProductsRequest.sort:type_name -> hipstershop.ProductSort
+	9,  // 4: hipstershop.ListCategoriesResponse.categories:type_name -> hipstershop.Category
+	1,  // 5: hipstershop.ProductCatalogService.ListProducts:input_type -> hipstershop.Empty
+	5,  // 6: hipstershop.ProductCatalogService.GetProduct:input_type -> hipstershop.GetProductRequest
+	6,  // 7: hipstershop.ProductCatalogService.SearchProducts:input_type -> hipstershop.SearchProductsRequest
+	8,  // 8: hipstershop.ProductCatalogService.ListProductsFiltered:input_type -> hipstershop.ListProductsRequest
+	1,  // 9: hipstershop.ProductCatalogService.ListCategories:input_type -> hipstershop.Empty
+	4,  // 10: hipstershop.ProductCatalogService.ListProducts:output_type -> hipstershop.ListProductsResponse
+	3,  // 11: hipstershop.ProductCatalogService.GetProduct:output_type -> hipstershop.Product
+	7,  // 12: hipstershop.ProductCatalogService.SearchProducts:output_type -> hipstershop.SearchProductsResponse
+	4,  // 13: hipstershop.ProductCatalogService.ListProductsFiltered:output_type -> hipstershop.ListProductsResponse
+	10, // 14: hipstershop.ProductCatalogService.ListCategories:output_type -> hipstershop.ListCategoriesResponse
+	10, // [10:15] is the sub-list for method output_type
+	5,  // [5:10] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_proto_productcatalog_proto_init() }
@@ -459,13 +851,14 @@ func file_proto_productcatalog_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_productcatalog_proto_rawDesc), len(file_proto_productcatalog_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   7,
+			NumEnums:      1,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_proto_productcatalog_proto_goTypes,
 		DependencyIndexes: file_proto_productcatalog_proto_depIdxs,
+		EnumInfos:         file_proto_productcatalog_proto_enumTypes,
 		MessageInfos:      file_proto_productcatalog_proto_msgTypes,
 	}.Build()
 	File_proto_productcatalog_proto = out.File

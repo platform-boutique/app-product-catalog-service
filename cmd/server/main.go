@@ -4,87 +4,72 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/http"
-	"net/http/pprof"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"product-catalog-service/data"
 	"product-catalog-service/internal/catalog"
+	"product-catalog-service/internal/obs"
 	pb "product-catalog-service/proto"
 
-	"github.com/grafana/pyroscope-go"
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 )
 
-var log *logrus.Logger
+// log is the process logger; obs.Start gives it (and the catalog package's logger) the contract's JSON
+// shape, the level from LOG_LEVEL and, with an OTLP endpoint, the OTLP log hook.
+var log = logrus.New()
 
-func init() {
-	log = logrus.New()
-	log.Formatter = &logrus.JSONFormatter{
-		FieldMap: logrus.FieldMap{
-			logrus.FieldKeyTime:  "timestamp",
-			logrus.FieldKeyLevel: "severity",
-			logrus.FieldKeyMsg:   "message",
-		},
-		TimestampFormat: time.RFC3339Nano,
-	}
-	log.Out = os.Stdout
-}
+// drainTimeout caps how long a SIGTERM waits for in-flight RPCs before the connections are closed.
+// With the telemetry flush (obs.DefaultShutdownTimeout, 4 s) the exit stays inside the 10 s of CODE-04.
+const drainTimeout = 5 * time.Second
 
 func main() {
-	// --- Telemetry: traces, metrics and logs pushed over OTLP/gRPC (Alloy → Tempo/Mimir/Loki) ---
-	shutdownTelemetry, err := initTelemetry(context.Background(), "product-catalog-service", log, catalog.Logger())
-	if err != nil {
-		log.Warnf("telemetry disabled, continuing without it: %v", err)
-	} else {
-		log.Info("telemetry enabled (OTLP/gRPC)")
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = shutdownTelemetry(ctx)
-		}()
+	// Env contract (OTEL_*, PYROSCOPE_ADDR), JSON logs, OTLP pipelines, Pyroscope, build_info, /metrics on
+	// :9090 (METRICS_PORT) and pprof only with PPROF_ADDR all live in internal/obs.
+	o := obs.Start(context.Background(), obs.Options{
+		Service: "product-catalog-service",
+		Loggers: []*logrus.Logger{log, catalog.Logger()},
+	})
+	defer o.Recover()
+	if err := realMain(o); err != nil {
+		o.Fatal("server error", err)
 	}
+	// Normal return = exit code 0 (SIGTERM/SIGINT drained cleanly).
+	o.Shutdown()
+}
 
-	// --- Profiling (Pyroscope push) ---
-	if os.Getenv("ENABLE_PROFILING") == "1" {
-		initProfiling()
-	} else {
-		log.Info("profiling disabled — set ENABLE_PROFILING=1 to enable")
-	}
-
+func realMain(o *obs.Obs) error {
 	// --- Extra latency injection for chaos/load testing ---
 	var extraLatency time.Duration
 	if s := os.Getenv("EXTRA_LATENCY"); s != "" {
 		v, err := time.ParseDuration(s)
 		if err != nil {
-			log.Fatalf("invalid EXTRA_LATENCY %q: %v", s, err)
+			o.Fatal("invalid configuration", fmt.Errorf("EXTRA_LATENCY %q: %w", s, err))
 		}
 		extraLatency = v
 		log.Infof("extra latency: %v", extraLatency)
 	}
 
-	// --- Hot-reload toggle via Unix signals ---
-	reloadCatalog := false
+	// --- Hot-reload toggle via Unix signals (the flag is atomic: handlers read it concurrently) ---
+	var reloadCatalog atomic.Bool
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
 	go func() {
 		for sig := range sigs {
 			if sig == syscall.SIGUSR1 {
-				reloadCatalog = true
+				reloadCatalog.Store(true)
 				log.Info("catalog reload enabled")
 			} else {
-				reloadCatalog = false
+				reloadCatalog.Store(false)
 				log.Info("catalog reload disabled")
 			}
 		}
@@ -95,35 +80,33 @@ func main() {
 		port = p
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
 	log.Infof("starting grpc server on :%s", port)
-	if err := run(port, extraLatency, &reloadCatalog); err != nil {
-		log.Fatalf("server error: %v", err)
-	}
+	return run(ctx, port, extraLatency, &reloadCatalog)
 }
 
-func run(port string, extraLatency time.Duration, reloadFlag *bool) error {
+func run(ctx context.Context, port string, extraLatency time.Duration, reloadFlag *atomic.Bool) error {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %s: %w", port, err)
 	}
 
-	otel.SetTextMapPropagator(
-		propagation.NewCompositeTextMapPropagator(
-			propagation.TraceContext{},
-			propagation.Baggage{},
-		),
-	)
-
 	// gRPC server with OTel tracing + Prometheus metrics interceptors
 	srv := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-		grpc.UnaryInterceptor(grpcprom.UnaryServerInterceptor),
-		grpc.StreamInterceptor(grpcprom.StreamServerInterceptor),
+		grpc.ChainUnaryInterceptor(obs.UnaryServerInterceptor(), rpcLogInterceptor(log), grpcprom.UnaryServerInterceptor),
+		grpc.ChainStreamInterceptor(obs.StreamServerInterceptor(), grpcprom.StreamServerInterceptor),
 	)
 
-	ctx := context.Background()
-	svc, err := catalog.NewProductCatalog(ctx, extraLatency, reloadFlag)
+	svc, err := catalog.NewProductCatalog(ctx, extraLatency, reloadFlag, data.Seed())
 	if err != nil {
+		_ = listener.Close()
+		if ctx.Err() != nil {
+			log.Info("shutdown signal received during start-up, exiting")
+			return nil
+		}
 		return fmt.Errorf("failed to init product catalog: %w", err)
 	}
 
@@ -137,75 +120,35 @@ func run(port string, extraLatency time.Duration, reloadFlag *bool) error {
 	grpcprom.Register(srv)
 	grpcprom.EnableHandlingTimeHistogram()
 
-	// --- Metrics (+ optional pprof) on a dedicated HTTP server with timeouts ---
-	go func() {
-		metricsMux := http.NewServeMux()
-		metricsMux.Handle("/metrics", promhttp.Handler())
-
-		// G108 fix: only register pprof handlers when profiling is explicitly enabled
-		if os.Getenv("ENABLE_PROFILING") == "1" {
-			registerPprofHandlers(metricsMux)
-			log.Info("pprof endpoints registered on metrics server")
-		}
-
-		metricsPort := "9090"
-		if p := os.Getenv("METRICS_PORT"); p != "" {
-			metricsPort = p
-		}
-
-		// G114 fix: use http.Server with explicit timeouts instead of http.ListenAndServe
-		metricsSrv := &http.Server{
-			Addr:              ":" + metricsPort,
-			Handler:           metricsMux,
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      60 * time.Second,
-			IdleTimeout:       120 * time.Second,
-		}
-
-		log.Infof("metrics endpoint on :%s", metricsPort)
-		if err := metricsSrv.ListenAndServe(); err != nil {
-			log.Warnf("metrics server error: %v", err)
-		}
-	}()
-
 	log.Infof("listening on %s", listener.Addr().String())
-	return srv.Serve(listener)
+	return serve(ctx, srv, listener, healthSrv, drainTimeout)
 }
 
-// registerPprofHandlers adds the standard pprof handlers to the given mux.
-// This avoids the blank import of net/http/pprof which unconditionally
-// registers handlers on DefaultServeMux (gosec G108).
-func registerPprofHandlers(mux *http.ServeMux) {
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-}
+// serve runs srv until it fails or ctx is cancelled (SIGTERM/SIGINT). On cancel it marks every
+// health service NOT_SERVING, stops accepting new RPCs, waits up to drain for in-flight ones
+// (GracefulStop) and then closes what is left (Stop). It returns nil after a requested shutdown,
+// so the process exits 0.
+func serve(ctx context.Context, srv *grpc.Server, l net.Listener, h *health.Server, drain time.Duration) error {
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(l) }()
 
-// initProfiling starts the Pyroscope push-based profiler.
-func initProfiling() {
-	pyroscopeAddr := os.Getenv("PYROSCOPE_ADDR")
-	if pyroscopeAddr == "" {
-		pyroscopeAddr = "http://pyroscope:4040"
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
 	}
 
-	_, err := pyroscope.Start(pyroscope.Config{
-		ApplicationName: "product-catalog-service",
-		ServerAddress:   pyroscopeAddr,
-		Logger:          pyroscope.StandardLogger,
-		ProfileTypes: []pyroscope.ProfileType{
-			pyroscope.ProfileCPU,
-			pyroscope.ProfileAllocObjects,
-			pyroscope.ProfileAllocSpace,
-			pyroscope.ProfileInuseObjects,
-			pyroscope.ProfileInuseSpace,
-		},
-	})
-	if err != nil {
-		log.Warnf("pyroscope init failed, continuing without it: %v", err)
-		return
+	log.Info("shutdown signal received, draining")
+	h.Shutdown() // NOT_SERVING for every service, so probes fail first
+	done := make(chan struct{})
+	go func() { srv.GracefulStop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(drain):
+		log.Warnf("graceful stop exceeded %v, closing remaining connections", drain)
+		srv.Stop()
+		<-done
 	}
-	log.Info("profiling enabled → pushing to " + pyroscopeAddr)
+	log.Info("shutdown complete")
+	return nil
 }

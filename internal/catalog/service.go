@@ -2,7 +2,10 @@ package catalog
 
 import (
 	"context"
+	"io/fs"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	pb "product-catalog-service/proto"
@@ -15,22 +18,34 @@ import (
 // ProductCatalog implements the gRPC ProductCatalogService.
 type ProductCatalog struct {
 	pb.UnimplementedProductCatalogServiceServer
+
+	mu           sync.RWMutex // guards catalog and departments
 	catalog      pb.ListProductsResponse
+	departments  []*pb.Category // product_count is filled per request
 	extraLatency time.Duration
-	reloadFlag   *bool
+	// reloadFlag is set by the signal goroutine (SIGUSR1) and consumed by request goroutines,
+	// hence atomic. nil = reload on signal is not wired.
+	reloadFlag *atomic.Bool
+	// load reads products and departments from Postgres; a field so tests can run without a database.
+	load func() ([]*pb.Product, []*pb.Category, error)
 }
 
-// NewProductCatalog initialises the DB pool and loads the catalog into memory.
-func NewProductCatalog(ctx context.Context, extraLatency time.Duration, reloadFlag *bool) (*ProductCatalog, error) {
+// NewProductCatalog initialises the DB pool, applies the schema migrations and the seed from
+// seed (nil = no seed), and loads the catalog into memory.
+func NewProductCatalog(ctx context.Context, extraLatency time.Duration, reloadFlag *atomic.Bool, seed fs.FS) (*ProductCatalog, error) {
 	if err := InitDB(ctx); err != nil {
+		return nil, err
+	}
+	if err := MigrateAndSeed(ctx, pool, seed); err != nil {
 		return nil, err
 	}
 
 	svc := &ProductCatalog{
 		extraLatency: extraLatency,
 		reloadFlag:   reloadFlag,
+		load:         loadFromDB,
 	}
-	if err := LoadCatalog(&svc.catalog); err != nil {
+	if err := svc.reload(); err != nil {
 		return nil, err
 	}
 	return svc, nil
@@ -88,19 +103,93 @@ func (p *ProductCatalog) SearchProducts(_ context.Context, req *pb.SearchProduct
 	return &pb.SearchProductsResponse{Results: results}, nil
 }
 
+// ListProductsFiltered returns one page of products filtered by department and query.
+func (p *ProductCatalog) ListProductsFiltered(_ context.Context, req *pb.ListProductsRequest) (*pb.ListProductsResponse, error) {
+	time.Sleep(p.extraLatency)
+	products, err := p.products()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to load catalog: %v", err)
+	}
+	resp, err := filterProducts(products, req)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return resp, nil
+}
+
+// ListCategories returns the departments in display order with their product counts.
+func (p *ProductCatalog) ListCategories(_ context.Context, _ *pb.Empty) (*pb.ListCategoriesResponse, error) {
+	time.Sleep(p.extraLatency)
+	products, err := p.products()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to load catalog: %v", err)
+	}
+	p.mu.RLock()
+	depts := p.departments
+	p.mu.RUnlock()
+
+	counts := map[string]int32{}
+	for _, pr := range products {
+		counts[pr.Department]++
+	}
+	out := make([]*pb.Category, 0, len(depts))
+	for _, d := range depts {
+		out = append(out, &pb.Category{Id: d.Id, Name: d.Name, Description: d.Description, ProductCount: counts[d.Id]})
+	}
+	return &pb.ListCategoriesResponse{Categories: out}, nil
+}
+
 // --- Internal ---
+
+// loadFromDB reads products and departments from Postgres.
+func loadFromDB() ([]*pb.Product, []*pb.Category, error) {
+	var fresh pb.ListProductsResponse
+	if err := LoadCatalog(&fresh); err != nil {
+		return nil, nil, err
+	}
+	depts, err := LoadDepartments()
+	if err != nil {
+		return nil, nil, err
+	}
+	return fresh.Products, depts, nil
+}
+
+// reload reads products and departments and swaps the cache.
+func (p *ProductCatalog) reload() error {
+	load := p.load
+	if load == nil {
+		load = loadFromDB
+	}
+	products, depts, err := load()
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	p.catalog.Products = products
+	p.departments = depts
+	p.mu.Unlock()
+	return nil
+}
 
 // products returns the in-memory catalog, reloading from Postgres only when
 // the SIGUSR1 reload flag is set (triggered externally) or the cache is empty.
+// The flag is one-shot: the request that clears it (CompareAndSwap) performs the reload; if the
+// reload fails the flag is re-armed so the next request retries.
 func (p *ProductCatalog) products() ([]*pb.Product, error) {
-	shouldReload := p.reloadFlag != nil && *p.reloadFlag
-	if shouldReload || len(p.catalog.Products) == 0 {
-		if err := LoadCatalog(&p.catalog); err != nil {
+	armed := p.reloadFlag != nil && p.reloadFlag.CompareAndSwap(true, false)
+	p.mu.RLock()
+	cached := p.catalog.Products
+	p.mu.RUnlock()
+	if armed || len(cached) == 0 {
+		if err := p.reload(); err != nil {
+			if armed {
+				p.reloadFlag.Store(true)
+			}
 			return nil, err
 		}
-		if p.reloadFlag != nil {
-			*p.reloadFlag = false
-		}
+		p.mu.RLock()
+		cached = p.catalog.Products
+		p.mu.RUnlock()
 	}
-	return p.catalog.Products, nil
+	return cached, nil
 }
