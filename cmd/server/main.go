@@ -96,7 +96,7 @@ func run(ctx context.Context, port string, extraLatency time.Duration, reloadFla
 	// gRPC server with OTel tracing + Prometheus metrics interceptors
 	srv := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-		grpc.ChainUnaryInterceptor(obs.UnaryServerInterceptor(), grpcprom.UnaryServerInterceptor),
+		grpc.ChainUnaryInterceptor(obs.UnaryServerInterceptor(), rpcLogInterceptor(log), grpcprom.UnaryServerInterceptor),
 		grpc.ChainStreamInterceptor(obs.StreamServerInterceptor(), grpcprom.StreamServerInterceptor),
 	)
 

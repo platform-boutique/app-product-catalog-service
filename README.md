@@ -99,7 +99,7 @@ Multi-stage [`Dockerfile`](Dockerfile):
 
 | Stage | Base | What happens |
 |---|---|---|
-| builder | `golang:1.25-alpine` | `go mod download`, then `CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w -X …/internal/obs.Version=… -X …/internal/obs.Commit=…" ./cmd/server` (BuildKit sets the target, so the same Dockerfile builds amd64 and arm64) |
+| builder | `golang:1.26-alpine` | `go mod download`, then `CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w -X …/internal/obs.Version=… -X …/internal/obs.Commit=…" ./cmd/server` (BuildKit sets the target, so the same Dockerfile builds amd64 and arm64) |
 | runtime | `alpine:3.21` | single binary at `/app/product-catalog-service` (Alpine rather than `scratch` so pprof/Pyroscope have a normal userland) |
 
 - **Entrypoint:** `/app/product-catalog-service`. `GOTRACEBACK=single`.
@@ -181,7 +181,7 @@ and was verified in the earlier local phase on a 3-node kind cluster (since dele
 |---|---|---|
 | **Traces** | OpenTelemetry (`otelgrpc` handlers), OTLP/gRPC exporter (batch processor, queue bounded at 2048), W3C TraceContext + Baggage propagated to every downstream call. Sampler from `OTEL_TRACES_SAMPLER` (SDK default `parentbased_always_on`) | Alloy `:4317` -> Tempo |
 | **Metrics** | The Prometheus default registry: `grpc_server_handled_total`, `grpc_server_handling_seconds_*`, `grpc_server_started_total`, `grpc_server_msg_*`, Go runtime/process. Served as Prometheus text on `:9090/metrics` (`METRICS_PORT`) and, because the same registry is bridged into OpenTelemetry, also pushed over OTLP every 15 s (metric names identical). Plus `build_info{service,version,commit} 1` | Alloy scrapes `:9090` -> Mimir |
-| **Logs** | `logrus`, one JSON object per line on stdout, plus an OTLP/gRPC hook (`otellogrus`). The process logger and the `internal/catalog` logger (migrations, seed, loader) are both configured by `obs.Start`, so start-up lines have the same fields as everyone else's (before, the catalog package wrote logrus' default keys `time`/`level`/`msg`). This service logs nothing per request, so `trace_id`/`span_id` appear only if a future call site logs with `log.WithContext(ctx)`; the `x-request-id` of a caller is put into the context by the gRPC interceptor. Nothing personal is logged (the catalog holds products only; the database URL is never logged) | stdout -> Alloy -> Loki; OTLP -> Alloy -> Loki |
+| **Logs** | `logrus`, one JSON object per line on stdout, plus an OTLP/gRPC hook (`otellogrus`). The process logger and the `internal/catalog` logger (migrations, seed, loader) are both configured by `obs.Start`, so start-up lines have the same fields as everyone else's (before, the catalog package wrote logrus' default keys `time`/`level`/`msg`). Every unary RPC writes one line after the handler returns (`cmd/server/rpclog.go`, an interceptor after `obs.UnaryServerInterceptor`): message `rpc`, fields `method` (full RPC method), `code` (gRPC status code string) and `duration_ms`, logged with `log.WithContext(ctx)` so the line carries `trace_id`/`span_id` of the server span and the `request_id` (the `x-request-id` of a caller is put into the context by the gRPC interceptor). Level `info` for OK and client codes (NotFound, InvalidArgument, ...), `error` with the error text for Internal, Unavailable, Unknown and DataLoss. The gRPC health and reflection methods are not logged, request and response messages never are. Nothing personal is logged (the catalog holds products only; the database URL is never logged) | stdout -> Alloy -> Loki; OTLP -> Alloy -> Loki |
 | **Profiles** | Pyroscope Go SDK (CPU, alloc/in-use objects and space, goroutines, mutex, block), only with `PYROSCOPE_ADDR`; tags `service_name`, `version`, `environment` | Pyroscope |
 
 **Telemetry contract** (the code is `internal/obs`, the same package in every Go service): telemetry is on only if `OTEL_EXPORTER_OTLP_ENDPOINT` is a valid absolute http(s) URL; `OTEL_SDK_DISABLED=true` forces everything off (profiling too); profiling only with `PYROSCOPE_ADDR`. Start never waits for the collector (the exporters connect in the background) and on SIGTERM the flush is cut off after 4 s, so a blackholed collector cannot hold the process (unit-tested with a listener that never answers: start and shutdown both return within the bound).
@@ -196,7 +196,7 @@ and was verified in the earlier local phase on a 3-node kind cluster (since dele
 
 Every series carries `job="product-catalog-service"` (from `service.name`) and `instance=<pod name>` (`service.instance.id`), which is what the Grafana dashboards select on. Logs land in Loki with `service_name="product-catalog-service"` and trace/span ids, so a log line links to its trace.
 
-**Verification status** (observability step 3): unit-tested (`go test ./cmd/... ./internal/...`) and, against a throwaway Postgres, `go test -tags integration ./tests/integration/` (goose migrations, seed, SIGTERM exit 0, `OTEL_SDK_DISABLED`, blackholed collector). Not run: the compose stack, a live collector or Pyroscope, an image build, the e2e suite (`tests/e2e`).
+**Verification status** (observability step 3): unit-tested (`go test ./cmd/... ./internal/...`) and, against a throwaway Postgres, `go test -tags integration ./tests/integration/` (goose migrations, seed, SIGTERM exit 0, `OTEL_SDK_DISABLED`, blackholed collector). The per-RPC log interceptor is covered by unit tests (`cmd/server/rpclog_test.go`: trace ids inside a span, levels by code, health/reflection not logged). Not run: the compose stack, a live collector or Pyroscope, the e2e suite (`tests/e2e`).
 
 ## Running locally
 
@@ -307,6 +307,7 @@ Ratings: `rating` / `review_count` follow the review-service seed (the shop UI s
 
 ```
 ├── cmd/server/main.go            # entrypoint: tracing, profiling, signals (SIGUSR1/2), gRPC server, metrics server
+├── cmd/server/rpclog.go          # per-RPC log line interceptor (method, code, duration_ms; health/reflection skipped)
 ├── data/
 │   ├── embed.go                  # embeds seed/*.json (go:embed cannot reach outside a package dir)
 │   └── seed/                     # products.json, categories.json, SOURCES.md
