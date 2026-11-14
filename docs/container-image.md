@@ -10,5 +10,5 @@ Multi-stage [`Dockerfile`](https://github.com/platform-boutique/app-product-cata
 - **Entrypoint:** `/app/product-catalog-service`. `GOTRACEBACK=single`.
 - **User: root** — no `USER` in the Dockerfile; the image runs as UID 0 (verified). The binary needs no privileges, so set a non-root `runAsUser` (e.g. `10001`) in Kubernetes.
 - **Architecture: `amd64` only** (`GOARCH=amd64` hard-coded) — fails with `exec format error` on `arm64` nodes.
-- **EXPOSE:** `3550`, `9090`. **No `HEALTHCHECK`.**
+- **EXPOSE:** `3550`, `9090`. **`HEALTHCHECK`:** exec form `["/app/product-catalog-service", "healthcheck"]` (gRPC `grpc.health.v1` Check on `127.0.0.1:${PORT:-3550}`, 3 s deadline, no shell tools).
 - **Image size:** ~11 MB. `.dockerignore` excludes `vendor/` only.

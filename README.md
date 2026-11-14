@@ -105,7 +105,7 @@ Multi-stage [`Dockerfile`](Dockerfile):
 - **Entrypoint:** `/app/product-catalog-service`. `GOTRACEBACK=single`.
 - **User:** numeric `USER 10001:10001` (no `/etc/passwd` entry needed; the process writes nothing to disk, so a read-only root filesystem works). Build args `SERVICE_VERSION` (default `dev`) and `SERVICE_COMMIT` (default `unknown`) set the OCI labels `version`/`revision` (plus `source`, `licenses=Apache-2.0`) and the ENV of the same names.
 - **Architecture:** built for the target platform (`TARGETARCH`); only the amd64 build was run here, arm64 is **not run**.
-- **EXPOSE:** `3550`, `9090`. **`HEALTHCHECK`:** `nc -z localhost ${PORT:-3550}` (TCP connect to the gRPC port; the service has no `healthcheck` subcommand, so this does not check `SERVING`).
+- **EXPOSE:** `3550`, `9090`. **`HEALTHCHECK`:** exec form `["/app/product-catalog-service", "healthcheck"]` (no shell, no `nc`/`wget`): the subcommand calls `grpc.health.v1.Health/Check` on `127.0.0.1:${PORT:-3550}` with a 3 s deadline and exits 0 only for `SERVING`. Run locally: `product-catalog-service healthcheck` (prints the status, exit code 0 or 1).
 - **Image size:** ~11 MB. `.dockerignore` excludes `vendor/` only.
 
 ## Kubernetes deployment notes
@@ -307,6 +307,7 @@ Ratings: `rating` / `review_count` follow the review-service seed (the shop UI s
 
 ```
 ├── cmd/server/main.go            # entrypoint: tracing, profiling, signals (SIGUSR1/2), gRPC server, metrics server
+├── internal/healthcheck/healthcheck.go     # `healthcheck` subcommand (container HEALTHCHECK): grpc.health.v1 Check on the own port
 ├── cmd/server/rpclog.go          # per-RPC log line interceptor (method, code, duration_ms; health/reflection skipped)
 ├── data/
 │   ├── embed.go                  # embeds seed/*.json (go:embed cannot reach outside a package dir)
@@ -348,4 +349,4 @@ protoc --go_out=. --go_opt=paths=source_relative \
 - `SearchProducts` still matches only name and description; brand/tag search is in `ListProductsFiltered`.
 - Migrations need DDL rights for the service's database user; there is no "migrations off" switch.
 - No down-migration is run by the service (the `-- +goose Down` sections exist but were not tested).
-- The `HEALTHCHECK` only proves the port accepts connections, not that the service reports `SERVING`.
+- The `HEALTHCHECK` reports `SERVING` of the gRPC health service, which is static for the service itself (it does not reflect downstream or database health).

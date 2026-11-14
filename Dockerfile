@@ -41,8 +41,8 @@ USER 10001:10001
 
 EXPOSE 3550 9090
 
-# The service has no healthcheck subcommand: TCP connect to the gRPC port with busybox nc (the image has no other client)
+# Exec form, no shell and no nc/wget: the binary calls grpc.health.v1 Check on its own port (PORT, default 3550)
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
-    CMD nc -z localhost ${PORT:-3550} || exit 1
+    CMD ["/app/product-catalog-service", "healthcheck"]
 
 ENTRYPOINT ["/app/product-catalog-service"]
