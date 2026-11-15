@@ -113,13 +113,13 @@ func TestConcurrentReloadAndRequests(t *testing.T) {
 	var flag atomic.Bool
 	svc := &ProductCatalog{
 		reloadFlag: &flag,
-		load: func() ([]*pb.Product, []*pb.Category, error) {
+		load: func(context.Context) ([]*pb.Product, []*pb.Category, error) {
 			n := loads.Add(1)
 			return []*pb.Product{{Id: "p1", Name: "One", Department: "d"}, {Id: "p2", Name: "Two", Department: "d"}},
 				[]*pb.Category{{Id: "d", Name: fmt.Sprint("dept ", n)}}, nil
 		},
 	}
-	if err := svc.reload(); err != nil {
+	if err := svc.reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,7 +136,7 @@ func TestConcurrentReloadAndRequests(t *testing.T) {
 			}
 			flag.Store(i%3 != 0)
 			if i%7 == 0 {
-				_ = svc.reload()
+				_ = svc.reload(context.Background())
 			}
 		}
 	}()
@@ -177,7 +177,7 @@ func TestReloadFlagIsOneShotAndRearmedOnError(t *testing.T) {
 	fail := true
 	svc := &ProductCatalog{
 		reloadFlag: &flag,
-		load: func() ([]*pb.Product, []*pb.Category, error) {
+		load: func(context.Context) ([]*pb.Product, []*pb.Category, error) {
 			loads++
 			if fail {
 				return nil, nil, errors.New("db down")
@@ -188,21 +188,21 @@ func TestReloadFlagIsOneShotAndRearmedOnError(t *testing.T) {
 	svc.catalog.Products = []*pb.Product{{Id: "old"}}
 
 	flag.Store(true)
-	if _, err := svc.products(); err == nil {
+	if _, err := svc.products(context.Background()); err == nil {
 		t.Fatal("want the reload error")
 	}
 	if !flag.Load() {
 		t.Fatal("flag should be re-armed after a failed reload")
 	}
 	fail = false
-	got, err := svc.products()
+	got, err := svc.products(context.Background())
 	if err != nil || len(got) != 1 || got[0].Id != "x" {
 		t.Fatalf("got %v, %v", got, err)
 	}
 	if flag.Load() {
 		t.Fatal("flag should be cleared after a successful reload")
 	}
-	if _, err := svc.products(); err != nil || loads != 2 {
+	if _, err := svc.products(context.Background()); err != nil || loads != 2 {
 		t.Fatalf("one-shot violated: %d loads, err %v", loads, err)
 	}
 }

@@ -7,12 +7,22 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
+	"product-catalog-service/internal/obs"
 	pb "product-catalog-service/proto"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 )
+
+// queryTimeout bounds one catalog query (CODE-05). A variable so tests can shrink it. It is the
+// earlier of this and the deadline of the context the caller passes.
+var queryTimeout = 10 * time.Second
+
+// connectTimeout is the pgx connect timeout when the DSN sets none.
+const connectTimeout = 5 * time.Second
 
 var (
 	log          *logrus.Logger
@@ -33,13 +43,26 @@ func InitDB(ctx context.Context) error {
 		return errors.New("DATABASE_URL is not set") // main logs it as one JSON error line and exits 1
 	}
 
-	p, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return fmt.Errorf("DATABASE_URL: %w", err) // the error never contains the password
+	}
+	if cfg.ConnConfig.ConnectTimeout == 0 {
+		cfg.ConnConfig.ConnectTimeout = connectTimeout
+	}
+	obs.InstrumentPool(cfg, nil) // every query and connect is a CLIENT span, child of the request span (OBS-10)
+	p, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	if err := p.Ping(ctx); err != nil {
+	pingCtx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	if err := p.Ping(pingCtx); err != nil {
 		p.Close()
 		return err
+	}
+	if err := obs.RegisterPoolMetrics(prometheus.DefaultRegisterer, p); err != nil {
+		log.WithError(err).Warn("database pool metrics not registered") // db_pool_* (OBS-20); the service runs without them
 	}
 
 	pool = p
@@ -52,14 +75,16 @@ func Pool() *pgxpool.Pool { return pool }
 
 // LoadCatalog queries Postgres using the shared pool and populates the catalog.
 // It is safe to call from multiple goroutines.
-func LoadCatalog(catalog *pb.ListProductsResponse) error {
+func LoadCatalog(ctx context.Context, catalog *pb.ListProductsResponse) error {
 	if pool == nil {
 		return fmt.Errorf("database pool not initialized")
 	}
 	catalogMutex.Lock()
 	defer catalogMutex.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
 
-	rows, err := pool.Query(context.Background(), `
+	rows, err := pool.Query(ctx, `
 		SELECT id, name, description, picture,
 		       price_usd_currency_code, price_usd_units, price_usd_nanos,
 		       categories,
@@ -102,11 +127,13 @@ func LoadCatalog(catalog *pb.ListProductsResponse) error {
 }
 
 // LoadDepartments returns the departments in display order (product_count is left 0).
-func LoadDepartments() ([]*pb.Category, error) {
+func LoadDepartments(ctx context.Context) ([]*pb.Category, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("database pool not initialized")
 	}
-	rows, err := pool.Query(context.Background(),
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	rows, err := pool.Query(ctx,
 		`SELECT id, name, description FROM departments ORDER BY sort_order, id`)
 	if err != nil {
 		return nil, err

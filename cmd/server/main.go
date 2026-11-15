@@ -100,7 +100,8 @@ func run(ctx context.Context, port string, extraLatency time.Duration, reloadFla
 	// gRPC server with OTel tracing + Prometheus metrics interceptors
 	srv := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-		grpc.ChainUnaryInterceptor(obs.UnaryServerInterceptor(), rpcLogInterceptor(log), grpcprom.UnaryServerInterceptor),
+		// Recovery runs innermost so a recovered panic is still counted as INTERNAL.
+		grpc.ChainUnaryInterceptor(obs.UnaryServerInterceptor(), rpcLogInterceptor(log), grpcprom.UnaryServerInterceptor, catalog.RecoveryUnaryInterceptor(log)),
 		grpc.ChainStreamInterceptor(obs.StreamServerInterceptor(), grpcprom.StreamServerInterceptor),
 	)
 
