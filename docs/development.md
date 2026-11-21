@@ -1,5 +1,25 @@
 # Develop & test
 
+## Checks and commands
+
+Requirements: Go 1.26 (`GOTOOLCHAIN=auto` fetches the `go.mod` version; the host has Go 1.22), Docker for the image, Python 3.12 for the docs check. The commands below are the ones the shared pipeline (`platform-demo-workflows`) runs, so a failure can be reproduced without pushing.
+
+| Step | Command | Result on 2026-11-21 |
+|---|---|---|
+| Format | `gofmt -l .` | run, no files listed |
+| Vet and unit tests | `go vet ./... && go test -race -count=1 ./...` | run, passed (5 packages with tests) |
+| Lint | `golangci-lint run ./...` (CI pins golangci-lint v2.14.0) | not run (golangci-lint is not installed on the host) |
+| Vulnerabilities and security | `govulncheck ./...`, `gosec -exclude-generated ./...` | not run |
+| Integration tests (Postgres) | `PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55872/postgres?sslmode=disable go test -tags integration -race -count=1 ./tests/integration/` against a throwaway `postgres:17-alpine` (`docker run -d --rm --name <unique name> --memory 256m -p 127.0.0.1:55872:5432 -e POSTGRES_PASSWORD=postgres postgres:17-alpine`, remove it afterwards); see Tests | run, passed (a throwaway container, removed afterwards) |
+| End-to-end tests | `GRPC_HOST=localhost:3550 go test -tags e2e ./tests/e2e/` against a running service | not run |
+| Dataset check | `python3 tools/validate_dataset.py --images-dir ../frontend/static/img/products --reviews ../review-service/data/reviews.json` (needs the frontend and review-service repos next to this one) | not run |
+| Proto | the `protoc` command is in `docs/development.md` (Regenerating the Go stubs); protoc 3.21.12, protoc-gen-go 1.36.11, protoc-gen-go-grpc 1.6.1 | not run. Changes are additive only, server first |
+| Image | `docker build -t platform-demo/product-catalog-service:local .` | not run today |
+| Image scan | `trivy image --severity CRITICAL,HIGH --exit-code 1 platform-demo/product-catalog-service:local` | not run today |
+| Secret scan | `pre-commit run --all-files` (`.pre-commit-config.yaml`, gitleaks) or `gitleaks git --redact` | run with the gitleaks binary of the pre-commit cache (`gitleaks git --redact`, full history, 86 commits): no leaks found |
+| Workflow lint | `actionlint` | run (actionlint 1.7.12), no findings |
+| Docs | `mkdocs build --strict` (mkdocs 1.6.1 + mkdocs-techdocs-core 1.7.1, Python 3.12 venv) and the link check `python3 -I tools/check-md-links.py .` from `platform-demo-workflows` (relative links in `README.md` and `docs/`) | run, both passed |
+
 ## Running locally
 
 Requirements: Go (the toolchain named in `go.mod`; with an older local Go set `GOTOOLCHAIN=auto`), Docker, [`grpcurl`](https://github.com/fullstorydev/grpcurl).
