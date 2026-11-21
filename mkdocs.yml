@@ -6,13 +6,19 @@ repo_url: https://github.com/platform-boutique/app-product-catalog-service
 edit_uri: edit/main/docs/
 nav:
   - Overview: index.md
+  - Architecture: architecture.md
   - API: api.md
   - Configuration: configuration.md
   - Container image: container-image.md
   - Kubernetes: kubernetes.md
   - Observability: observability.md
+  - Operations: operations.md
   - Develop & test: development.md
   - Known limitations: limitations.md
+  - Decisions:
+      - "1. Service owns schema and seed": adr/0001-service-owns-schema-and-seed.md
+      - "2. In-memory catalog, reload by signal": adr/0002-in-memory-catalog-with-signal-reload.md
+      - "3. Legacy proto package hipstershop": adr/0003-legacy-proto-package-hipstershop.md
 theme:
   name: material
   features:

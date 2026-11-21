@@ -17,6 +17,8 @@ A gRPC service that exposes the product catalog for the platform-demo e-commerce
 
 Called by `frontend`, `checkout-service`, `recommendation-service`. It calls `product-catalog-db`.
 
+Pages: [architecture](architecture.md), [API](api.md), [configuration](configuration.md), [observability](observability.md), [operations](operations.md), [development](development.md), [decisions](adr/0001-service-owns-schema-and-seed.md).
+
 ```mermaid
 flowchart LR
   product_catalog_service["<b>product-catalog-service</b><br/>3550 (gRPC)"]:::me

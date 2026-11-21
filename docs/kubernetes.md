@@ -37,7 +37,7 @@ livenessProbe:
 ```yaml
 securityContext:
   runAsNonRoot: true
-  runAsUser: 10001        # image runs as root by default; any non-zero UID works
+  runAsUser: 10001        # same as the image USER
   runAsGroup: 10001
   readOnlyRootFilesystem: true
   allowPrivilegeEscalation: false

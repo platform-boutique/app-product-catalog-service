@@ -1,0 +1,46 @@
+product-catalog-service (Everly store catalog)
+The source code is licensed under the Apache License 2.0 (see LICENSE).
+The Apache License 2.0 does NOT cover the product data described below.
+
+Product data derived from DummyJSON
+-----------------------------------
+data/seed/products.json and data/seed/categories.json are derived from the product data of DummyJSON
+(https://dummyjson.com, project: https://github.com/Ovi/DummyJSON by Muhammad Ovi), retrieved on 2026-10-27 with
+tools/fetch_dataset.py and then selected, regrouped into departments and edited (see data/seed/SOURCES.md). The
+`rating` and `review_count` values are not from DummyJSON; they are derived from the review-service seed.
+
+The DummyJSON software repository is MIT licensed. Its licence text, as found in the repository's LICENSE file on
+2026-11-21, follows; the MIT licence requires this notice to be kept with copies of the covered work:
+
+The MIT License (MIT)
+
+DummyJSON - Muhammad Ovi (Owais)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Status: licence of the hosted data and of the product images NOT VERIFIED
+-------------------------------------------------------------------------
+No separate terms of use for dummyjson.com and no licence or provenance statement for the product images on
+cdn.dummyjson.com were found (data/seed/ATTRIBUTION.md and data/seed/SOURCES.md have the details). The data and the
+images are assumed, not confirmed, to be covered by the MIT licence above. They are used as demo data only. The images
+themselves are in the frontend repository (static/img/products/), which carries its own NOTICE.
+
+Brand and product names in the demo data (for example watches, shoes, bags) belong to their respective owners and are
+shown only as sample data; no affiliation or endorsement is implied.
+
+Do not reuse the data or the images outside this demo before their licence has been clarified.

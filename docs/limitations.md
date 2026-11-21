@@ -9,4 +9,4 @@
 - `SearchProducts` still matches only name and description; brand/tag search is in `ListProductsFiltered`.
 - Migrations need DDL rights for the service's database user; there is no "migrations off" switch.
 - No down-migration is run by the service (the `-- +goose Down` sections exist but were not tested).
-- `amd64`-only image that runs as root unless the pod overrides it.
+- The image is `linux/amd64` only (owner decision 2026-11-14) and runs as the numeric user `10001:10001`.
