@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"product-catalog-service/data"
 	"product-catalog-service/internal/catalog"
 	pb "product-catalog-service/proto"
 )
@@ -29,8 +30,9 @@ func TestLoadCatalog_ReturnsProducts(t *testing.T) {
 	if err := catalog.InitDB(ctx); err != nil {
 		t.Fatalf("InitDB failed: %v", err)
 	}
-	// The loader reads the columns added by the migrations (no seed: whatever rows exist are kept).
-	if err := catalog.MigrateAndSeed(ctx, catalog.Pool(), nil); err != nil {
+	// The loader reads the columns added by the migrations; the embedded dataset makes the test independent of
+	// what the database held before (an empty Postgres works).
+	if err := catalog.MigrateAndSeed(ctx, catalog.Pool(), data.Seed()); err != nil {
 		t.Fatalf("MigrateAndSeed failed: %v", err)
 	}
 
