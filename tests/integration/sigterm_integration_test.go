@@ -44,7 +44,7 @@ func freePort(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	_, p, _ := net.SplitHostPort(l.Addr().String())
 	return p
 }
@@ -98,7 +98,7 @@ func runServer(t *testing.T, env ...string) (*exec.Cmd, *lockedBuf, <-chan error
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	hc := healthpb.NewHealthClient(conn)
 	for {
 		// The port opens before migrations and the seed are done: wait for SERVING.
